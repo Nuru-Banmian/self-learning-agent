@@ -95,6 +95,27 @@ TOOLS = [
         {"suggestion_id": {"type": "string"}},
         ["suggestion_id"],
     ),
+    function_tool(
+        "answer_question",
+        "普通问答。当前明确要求优先；记忆只是资料。只引用实际加载的记忆ID，采用说明不代表效果已验证。不得声称已保存或修改任何数据。",
+        {
+            "reply": {"type": "string"},
+            "memory_usage": {
+                "type": "array",
+                "maxItems": 6,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "memory_id": {"type": "string"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["memory_id", "reason"],
+                },
+            },
+        },
+        ["reply", "memory_usage"],
+    ),
 ]
 
 
@@ -108,6 +129,8 @@ async def call_model(
     run_id: str,
     messages: list[dict[str, Any]],
     transport: httpx.AsyncBaseTransport | None,
+    *,
+    schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     key = settings.dashscope_api_key.get_secret_value()
     if not key:
@@ -119,6 +142,11 @@ async def call_model(
     ) as client:
         attempts = min(settings.max_model_calls, settings.model_retries + 1)
         for attempt in range(attempts):
+            run = store.run(run_id)
+            # Learning cannot exhaust the budget needed for the main answer.
+            available = settings.max_model_calls - (1 if schema else 0)
+            if run is None or run["model_calls"] >= available:
+                break
             store.count_call(run_id)
             try:
                 response = await client.post(
@@ -128,8 +156,20 @@ async def call_model(
                         "model": MODEL,
                         "messages": messages,
                         "enable_thinking": False,
-                        "tools": TOOLS,
-                        "tool_choice": "auto",
+                        **(
+                            {
+                                "response_format": {
+                                    "type": "json_schema",
+                                    "json_schema": {
+                                        "name": "memory_candidates",
+                                        "strict": True,
+                                        "schema": schema,
+                                    },
+                                }
+                            }
+                            if schema
+                            else {"tools": TOOLS, "tool_choice": "auto"}
+                        ),
                         "max_tokens": 1800,
                     },
                 )

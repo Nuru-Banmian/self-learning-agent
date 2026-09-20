@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.memory import active
 from app.runtime import execute
 from app.settings import Settings
 from app.store import Conflict, Store
@@ -134,6 +135,12 @@ def create_app(
     @app.get("/api/todos")
     def todos() -> list[dict[str, Any]]:
         return store.todos()
+
+    @app.get("/api/memories")
+    def memories() -> list[dict[str, Any]]:
+        return [
+            m | {"active": active(m, now(), store.todos())} for m in store.memories()
+        ]
 
     @app.get("/api/todos/overview")
     def todo_overview() -> dict[str, Any]:

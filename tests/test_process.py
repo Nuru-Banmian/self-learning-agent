@@ -166,3 +166,74 @@ def test_real_process_restart_keeps_todos_messages_requests_and_replays(tmp_path
         provider.shutdown()
         provider.server_close()
         thread.join(timeout=5)
+
+
+def test_real_process_restart_loads_memory_without_old_conversation(tmp_path):
+    from tests.test_chat import submit
+    from tests.test_memory import candidate
+
+    requests = []
+
+    class Provider(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            requests.append(body)
+            if "response_format" in body:
+                source = json.loads(body["messages"][-1]["content"])
+                payload = {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {"candidates": [candidate(source)]}
+                                )
+                            }
+                        }
+                    ]
+                }
+            else:
+                memories = json.loads(body["messages"][1]["content"])["memories"]
+                payload = operation_response(
+                    "answer_question",
+                    {
+                        "reply": "先阅读官方资料。",
+                        "memory_usage": [
+                            {"memory_id": m["id"], "reason": "按资料偏好选择"}
+                            for m in memories
+                        ],
+                    },
+                )
+            encoded = json.dumps(payload).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def log_message(self, *args):
+            pass
+
+    provider = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+    thread = threading.Thread(target=provider.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{provider.server_port}/v1"
+    port = free_port()
+    database = tmp_path / "memory-restart.db"
+    try:
+        with server_process(port, database, url) as (c, original):
+            submit(c, "我喜欢优先阅读官方资料")
+            saved = c.get("/api/memories").json()
+            assert len(saved) == 1
+        assert original.poll() is not None
+        with server_process(port, database, url) as (c, restarted):
+            assert restarted.pid != original.pid
+            assert c.get("/api/memories").json() == saved
+            run, events = submit(c, "Python 有什么资料？", "after-restart")
+            assert run["memory"]["loaded"][0]["id"] == saved[0]["id"]
+            assert run["memory"]["usage"][0]["memory_id"] == saved[0]["id"]
+            assert len(requests[-1]["messages"]) == 3
+            assert "event: terminal" in events
+    finally:
+        provider.shutdown()
+        provider.server_close()
+        thread.join(timeout=5)
