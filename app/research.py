@@ -103,6 +103,21 @@ async def research_learning(
         raise Clarification("查询引用了无效待办，请重新明确学习主题。")
     if not set(task.memory_ids) <= {m["id"] for m in loaded}:
         raise Clarification("查询引用了未生效记忆，请重新提问。")
+    # Carry the currently selected source preferences into the actual tool input;
+    # a model's memory_usage claim alone does not show changed search behaviour.
+    preferences = [m for m in loaded if m["category"] == "preference"]
+    if preferences:
+        query = (
+            task.query
+            + "；用户资料偏好："
+            + "；".join(m["content"] for m in preferences)
+        )
+        if len(query) > 1024:
+            raise Clarification("资料偏好与查询过长，请缩短本次问题或整理相关记忆。")
+        task.query = query
+        task.memory_ids = list(
+            dict.fromkeys(task.memory_ids + [m["id"] for m in preferences])
+        )
     run_id = run["id"]
     record: dict[str, Any] = {
         "task": task.model_dump(),

@@ -1,4 +1,5 @@
 import asyncio
+from time import monotonic
 from typing import Any
 
 import httpx
@@ -189,6 +190,15 @@ async def call_model(
             if run is None or run["model_calls"] >= available:
                 break
             store.count_call(run_id)
+            started = monotonic()
+            evidence: dict[str, Any] = {
+                "model": MODEL,
+                "mode": "json_schema" if schema else "tool_calling",
+                "enable_thinking": False,
+                "status": "error",
+                "http_status": None,
+                "usage": None,
+            }
             try:
                 response = await client.post(
                     settings.dashscope_base_url.rstrip("/") + "/chat/completions",
@@ -222,10 +232,20 @@ async def call_model(
                         "max_tokens": 1800,
                     },
                 )
+                evidence["http_status"] = response.status_code
                 response.raise_for_status()
-                result: dict[str, Any] = response.json()["choices"][0]["message"]
+                payload = response.json()
+                result: dict[str, Any] = payload["choices"][0]["message"]
                 if not isinstance(result, dict):
                     raise TypeError("invalid message")
+                usage = payload.get("usage")
+                if isinstance(usage, dict):
+                    evidence["usage"] = {
+                        k: usage[k]
+                        for k in ("prompt_tokens", "completion_tokens", "total_tokens")
+                        if type(usage.get(k)) is int and usage[k] >= 0
+                    } or None
+                evidence["status"] = "success"
                 return result
             except httpx.RequestError:
                 pass
@@ -234,6 +254,9 @@ async def call_model(
                     break
             except (ValueError, KeyError, IndexError, TypeError):
                 break
+            finally:
+                evidence["elapsed_ms"] = round((monotonic() - started) * 1000)
+                store.event(run_id, "model_result", evidence)
             if attempt + 1 < attempts:
                 await asyncio.sleep(0.2 * (attempt + 1))
     # Never echo provider bodies, headers or exception strings containing credentials.

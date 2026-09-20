@@ -4,6 +4,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.memory_policy import mixed_todo_content
+
 
 class Clarification(Exception):
     pass
@@ -238,6 +240,8 @@ def prepare_todos(arguments: str, content: str, today: date) -> list[dict[str, A
         r"不要|不用|别|无需|不想|不打算|取消|[“”\"「」]",
         content,
     )
+    # Check the full user message before separating its independent task clause.
+    content = mixed_todo_content(content) or content
     permitted = re.match(
         r"^(?:请|麻烦)?(?:帮我|给我)?(?:记录|记下|记一下|添加|新增|加入|安排)|"
         r"^(?:(?:今天|明天|后天)\s*)?我(?:要|准备|打算)|"

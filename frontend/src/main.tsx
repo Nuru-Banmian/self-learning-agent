@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 import { WeatherPanel, type WeatherEvidence } from "./WeatherPanel";
+import { EvidencePanel } from "./EvidencePanel";
 
 type Message = { id: string; role: string; content: string };
 type Todo = {
@@ -1127,6 +1128,7 @@ function App() {
           </div>
         </div>
       </section>
+      <EvidencePanel runs={runs} />
       <footer>
         日常 / 个人工作台 <span>从今天开始，慢慢做好每件事。</span>
       </footer>

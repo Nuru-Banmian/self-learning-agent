@@ -10,7 +10,8 @@ from pydantic import ValidationError
 
 from app.memory import Answer, answer_text, learn, select_memories
 from app.memory_changes import chat_memory_change, prepare_memory_change
-from app.model import TOOLS, ModelError, call_model
+from app.memory_policy import mixed_todo_content
+from app.model import MODEL, TOOLS, ModelError, call_model
 from app.research import (
     explicit_search,
     finish_research,
@@ -41,6 +42,28 @@ async def execute(
     run = store.run(run_id)
     assert run is not None
     try:
+        store.execution_record(
+            run_id,
+            {
+                "model": MODEL,
+                "enable_thinking": False,
+                **settings.model_dump(
+                    include={
+                        "max_model_calls",
+                        "model_retries",
+                        "model_timeout_seconds",
+                        "run_timeout_seconds",
+                        "max_search_calls",
+                        "search_retries",
+                        "search_timeout_seconds",
+                        "max_weather_calls",
+                        "weather_retries",
+                        "weather_timeout_seconds",
+                        "user_timezone",
+                    }
+                ),
+            },
+        )
         async with asyncio.timeout(settings.run_timeout_seconds):
             local = datetime.fromisoformat(run["received_at"]).astimezone(
                 ZoneInfo(settings.user_timezone)
@@ -108,7 +131,9 @@ async def execute(
             store.memory_record(run_id, loaded=loaded, usage=[], effect_verified=False)
             store.event(run_id, "role", {"role": "main", "status": "processing"})
             required_tool = (
-                "prepare_outing"
+                "create_todos"
+                if mixed_todo_content(run["content"])
+                else "prepare_outing"
                 if explicit_weather(run["content"])
                 else "research_learning"
                 if explicit_search(run["content"])
@@ -266,7 +291,9 @@ async def execute(
             if tool != "create_todos":
                 raise ValueError("无法验证操作，请明确要记录的待办。")
             prepared = prepare_todos(
-                calls[0]["function"]["arguments"], run["content"], local.date()
+                calls[0]["function"]["arguments"],
+                run["content"],
+                local.date(),
             )
             store.event(run_id, "tool_call", {"role": "main", "tool": "create_todos"})
             reply = "已保存：\n" + "\n".join(

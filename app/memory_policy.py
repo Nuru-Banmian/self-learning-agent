@@ -142,6 +142,28 @@ def source_clauses(content: str) -> list[str]:
     return [p.strip() for p in re.split(r"[，,。；;\n！？!?]", content) if p.strip()]
 
 
+def mixed_todo_content(content: str) -> str | None:
+    """Separate a standalone dated intention from ordinary personal statements.
+
+    Only complete clauses are accepted. Adjacent scope qualifiers remain attached
+    to memory, and the returned task still passes the full todo authorization.
+    """
+    clauses = source_clauses(content)
+    tasks = [
+        c
+        for c in clauses
+        if re.match(r"^(?:今天|明天|后天)我要\S", c)
+        and not re.search(r"仅|只|限于|时候|期间|的话|但是|但|不过", c)
+    ]
+    if len(tasks) != 1 or len(clauses) < 2:
+        return None
+    if all(
+        category_of(c) in ("preference", "background") for c in clauses if c != tasks[0]
+    ):
+        return tasks[0]
+    return None
+
+
 def category_of(clause: str) -> str | None:
     if re.search(
         r"这周|本周|下周|这月|本月|今年|最近|暂时|这几天|\d+月|\d+号|\d{4}-", clause

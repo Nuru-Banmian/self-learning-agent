@@ -24,19 +24,32 @@ def free_port():
 
 
 @contextmanager
-def server_process(port, db_path, provider_url, api_key="fixture-key"):
-    environment = os.environ | {
-        "DB_PATH": str(db_path),
-        "DASHSCOPE_API_KEY": api_key,
-        "DASHSCOPE_BASE_URL": provider_url,
-        "PYTHONUTF8": "1",
-    }
+def server_process(
+    port,
+    db_path,
+    provider_url,
+    api_key="fixture-key",
+    *,
+    factory="app.main:create_app",
+    extra_env=None,
+    client_timeout=10,
+):
+    environment = (
+        os.environ
+        | (extra_env or {})
+        | {
+            "DB_PATH": str(db_path),
+            "DASHSCOPE_API_KEY": api_key,
+            "DASHSCOPE_BASE_URL": provider_url,
+            "PYTHONUTF8": "1",
+        }
+    )
     process = subprocess.Popen(
         [
             sys.executable,
             "-m",
             "uvicorn",
-            "app.main:create_app",
+            factory,
             "--factory",
             "--host",
             "127.0.0.1",
@@ -51,7 +64,7 @@ def server_process(port, db_path, provider_url, api_key="fixture-key"):
     )
     try:
         with httpx.Client(
-            base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=10
+            base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=client_timeout
         ) as c:
             for _ in range(100):
                 if process.poll() is not None:
@@ -233,6 +246,16 @@ def test_real_process_restart_loads_memory_without_old_conversation(tmp_path):
             assert run["memory"]["usage"][0]["memory_id"] == saved[0]["id"]
             assert len(requests[-1]["messages"]) == 3
             assert "event: terminal" in events
+            check = {
+                "id": "restart-check",
+                "criterion": "重启后新会话加载原偏好",
+                "observation": "HTTP 读回来源一致，供应商收到的当前请求没有旧对话",
+                "status": "passed",
+            }
+            assert (
+                c.post("/api/runs/after-restart/checkpoints", json=check).status_code
+                == 201
+            )
             session = c.post("/api/sessions").json()["id"]
             old = saved[0]
             action(
@@ -248,6 +271,10 @@ def test_real_process_restart_loads_memory_without_old_conversation(tmp_path):
             assert c.get("/api/memories").json() == []
         with server_process(port, database, url, api_key="") as (c, offline):
             assert offline.pid != restarted.pid
+            evidence = c.get("/api/runs/after-restart").json()
+            assert evidence["checkpoints"][0]["criterion"] == check["criterion"]
+            assert evidence["memory"]["loaded"][0]["id"] == saved[0]["id"]
+            assert evidence["execution"]["model"] == "qwen3.7-plus-2026-05-26"
             result, _ = action(
                 c,
                 session,

@@ -464,3 +464,43 @@ footer {
   overflow: auto;
   overflow-wrap: anywhere;
 }
+.evidence-panel {
+  margin-top: 24px;
+  padding: 24px;
+}
+.evidence-panel label {
+  display: block;
+  margin: 12px 0;
+}
+.evidence-panel input,
+.evidence-panel select,
+.evidence-panel textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+}
+.evidence-comparison {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 16px;
+}
+.evidence-snapshot {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.evidence-reply {
+  white-space: pre-wrap;
+}
+.evidence-panel input,
+.evidence-panel select {
+  padding: 8px;
+  border: 1px solid #dfe3d7;
+  border-radius: 6px;
+  background: #fffefa;
+  color: #334433;
+  font: inherit;
+}
+.evidence-panel form {
+  padding: 12px 0;
+}

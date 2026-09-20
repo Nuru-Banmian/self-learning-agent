@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.memory_policy import (
     category_of,
+    mixed_todo_content,
     same_subject,
     source_clauses,
     topic_matches,
@@ -203,7 +204,7 @@ async def learn(
                 c,
             )
             for c in clauses
-            if c != candidate.content
+            if c != candidate.content and c != mixed_todo_content(run["content"])
         ):
             rejected += 1
             continue
