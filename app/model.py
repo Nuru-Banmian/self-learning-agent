@@ -64,6 +64,21 @@ def function_tool(
 TOOLS = [
     CREATE_TOOL,
     function_tool(
+        "research_learning",
+        "学习安排需要外部资料时委派执行 Agent 搜索。"
+        "结合真实待办和生效记忆，明确主题和资料偏好；无须外部资料不用此工具。",
+        {
+            "query": {"type": "string", "maxLength": 1024},
+            "todo_ids": {"type": "array", "items": {"type": "string"}},
+            "memory_ids": {"type": "array", "items": {"type": "string"}},
+            "read_body": {
+                "type": "boolean",
+                "description": "确需正文中的详细示例时才读取正文",
+            },
+        },
+        ["query", "todo_ids", "memory_ids", "read_body"],
+    ),
+    function_tool(
         "update_todo",
         "修改一项待办，必须使用实际稳定ID。只提交用户要求修改的字段。",
         {
@@ -131,6 +146,7 @@ async def call_model(
     transport: httpx.AsyncBaseTransport | None,
     *,
     schema: dict[str, Any] | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     key = settings.dashscope_api_key.get_secret_value()
     if not key:
@@ -168,7 +184,10 @@ async def call_model(
                                 }
                             }
                             if schema
-                            else {"tools": TOOLS, "tool_choice": "auto"}
+                            else {
+                                "tools": tools if tools is not None else TOOLS,
+                                "tool_choice": "auto",
+                            }
                         ),
                         "max_tokens": 1800,
                     },

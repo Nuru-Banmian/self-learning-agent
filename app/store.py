@@ -67,6 +67,10 @@ class Store:
                 db.execute(
                     "ALTER TABLE runs ADD COLUMN memory TEXT NOT NULL DEFAULT '{}'"
                 )
+            if "research" not in columns:
+                db.execute(
+                    "ALTER TABLE runs ADD COLUMN research TEXT NOT NULL DEFAULT '{}'"
+                )
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -114,7 +118,16 @@ class Store:
                 "todo_ids": json.loads(row["todo_ids"]),
                 "action": json.loads(row["action"]) if row["action"] else None,
                 "memory": json.loads(row["memory"]),
+                "research": json.loads(row["research"]),
             }
+
+    def research_record(self, run_id: str, record: dict[str, Any]) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE runs SET research=? WHERE id=?",
+                (json.dumps(record, ensure_ascii=False), run_id),
+            )
+            self._event(db, run_id, "research", record)
 
     def memories(self) -> list[dict[str, Any]]:
         with self.connect() as db:
