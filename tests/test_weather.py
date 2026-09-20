@@ -451,6 +451,7 @@ def test_explicit_weather_request_limits_main_to_readonly_weather_delegation(tmp
     [
         ("查询今天上海天气", "2026-09-20"),
         ("查询明天北京天气", None),
+        ("明天北京出行需要准备什么？", None),
     ],
 )
 def test_model_cannot_override_current_destination_or_date_with_unrelated_todo(
