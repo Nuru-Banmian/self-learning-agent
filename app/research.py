@@ -40,6 +40,21 @@ class ResearchAnswer(BaseModel):
     memory_usage: list[Usage] = Field(max_length=6)
 
 
+def explicit_search(content: str) -> bool:
+    # Honor a direct read request without offering unrelated write tools.
+    return bool(
+        re.search(
+            r"(?:^|[。！？?；;，,])\s*(?:请|帮我|请帮我)?"
+            r"(?:结合[^，。！？?]{1,20})?(?:搜索|查找).*"
+            r"(?:资料|文档|教程|示例|学习)",
+            content,
+        )
+    ) and not re.search(
+        r"不要|不用|不需要|不必|无需|别|解释|什么意思|这句话|记录|加入待办|修改|完成|[‘’“”\"']",
+        content,
+    )
+
+
 def memory_query(content: str, todos: list[dict[str, Any]], local: datetime) -> str:
     query = content
     if any(w in content for w in ("今天", "当天", "计划", "安排")):

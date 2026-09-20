@@ -10,8 +10,13 @@ from pydantic import ValidationError
 
 from app.memory import Answer, answer_text, learn, select_memories
 from app.memory_changes import chat_memory_change, prepare_memory_change
-from app.model import ModelError, call_model
-from app.research import finish_research, memory_query, research_learning
+from app.model import TOOLS, ModelError, call_model
+from app.research import (
+    explicit_search,
+    finish_research,
+    memory_query,
+    research_learning,
+)
 from app.settings import Settings
 from app.store import Store
 from app.todos import (
@@ -101,6 +106,9 @@ async def execute(
             revision = store.memory_revision()
             store.memory_record(run_id, loaded=loaded, usage=[], effect_verified=False)
             store.event(run_id, "role", {"role": "main", "status": "processing"})
+            required_tool = (
+                "research_learning" if explicit_search(run["content"]) else None
+            )
             response = await call_model(
                 settings,
                 store,
@@ -119,7 +127,9 @@ async def execute(
                             "查询待办用list_todos；修改用update_todo，完成用complete_todo。"
                             "使用实际稳定ID，重名或代词不清先追问，不替用户选择。"
                             "修改只提交要求修改的字段。"
-                            "今天该做什么或规划今天用plan_day，根据真实待办给具体行动步骤；不要另调list_todos。"
+                            "不需要外部资料的当天计划用plan_day；根据真实待办给具体行动步骤。"
+                            "学习待办需要资料或用户明确要求查询资料时优先research_learning，"
+                            "不能只把搜索列为建议而不实际查询。"
                             "行动建议应给出可执行的小步骤，不只重复待办标题，不把未来待办当作今天必须完成。"
                             "用户接受建议用accept_suggestion；只能使用当前会话的建议ID。"
                             "普通聊天和问题必须调用answer_question回答，不声称已保存。"
@@ -146,6 +156,10 @@ async def execute(
                     {"role": "user", "content": run["content"]},
                 ],
                 transport,
+                tools=[t for t in TOOLS if t["function"]["name"] == required_tool]
+                if required_tool
+                else None,
+                required_tool=required_tool,
             )
             if store.memory_revision() != revision:
                 store.memory_record(run_id, loaded=[], usage=[], effect_verified=False)
@@ -164,6 +178,8 @@ async def execute(
                 raise ValueError("无法验证操作，请明确要记录的待办。")
             function = calls[0]["function"]
             tool = function["name"]
+            if required_tool and tool != required_tool:
+                raise ModelError("未能生成有效搜索查询，请重试；待办未修改。")
             arguments = json.loads(function["arguments"])
             if not isinstance(arguments, dict):
                 raise ValueError("模型操作参数无效，未修改待办。")

@@ -549,7 +549,8 @@ class Store:
                 if research["sources"]:
                     status = "partial"
                     reply += "\n\n已取得的外部资料保留：\n" + "\n".join(
-                        f"[{s['id']}] {s['title']} ({s['material_type']})\n{s['url']}\n{s['snippet']}"
+                        f"[{s['id']}] {s['title']} ({s['material_type']})\n"
+                        f"{s['url']}\n{s['snippet']}"
                         for s in research["sources"]
                     )
             if status == "failed" and memory.get("saved_ids"):

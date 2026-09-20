@@ -385,3 +385,24 @@ def test_shutdown_finalizes_persisted_execution_status(tmp_path):
         assert run["status"] == "failed"
         assert run["research"]["status"] == "error"
         assert all(call["status"] == "error" for call in run["research"]["calls"])
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "查找 Python 生成器的官方学习资料，并给我一个练习",
+        "今天我该干什么？请结合待办查找学习资料并给一个练习",
+    ],
+)
+def test_explicit_search_cannot_be_routed_to_a_write_tool(tmp_path, content):
+    requests = []
+    with research_client(tmp_path, requests) as c:
+        run, _ = submit(c, content)
+        main = requests[0][1]
+        assert main["tool_choice"] == {
+            "type": "function",
+            "function": {"name": "research_learning"},
+        }
+        assert [t["function"]["name"] for t in main["tools"]] == ["research_learning"]
+        assert run["status"] == "completed"
+        assert c.get("/api/todos").json() == []

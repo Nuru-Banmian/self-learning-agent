@@ -100,7 +100,8 @@ TOOLS = [
     function_tool("list_todos", "查询真实待办及状态，不修改。", {}, []),
     function_tool(
         "plan_day",
-        "根据真实待办生成基础当天计划。只返回可选行动建议，不声称建议已安排，不写待办。空清单不虚构安排。",
+        "无需外部资料时根据真实待办生成基础当天计划。"
+        "需要学习资料时用research_learning。只返回可选建议，不写待办。",
         {"suggestions": {"type": "array", "maxItems": 5, "items": {"type": "string"}}},
         ["suggestions"],
     ),
@@ -147,6 +148,7 @@ async def call_model(
     *,
     schema: dict[str, Any] | None = None,
     tools: list[dict[str, Any]] | None = None,
+    required_tool: str | None = None,
 ) -> dict[str, Any]:
     key = settings.dashscope_api_key.get_secret_value()
     if not key:
@@ -186,7 +188,12 @@ async def call_model(
                             if schema
                             else {
                                 "tools": tools if tools is not None else TOOLS,
-                                "tool_choice": "auto",
+                                "tool_choice": {
+                                    "type": "function",
+                                    "function": {"name": required_tool},
+                                }
+                                if required_tool
+                                else "auto",
                             }
                         ),
                         "max_tokens": 1800,
