@@ -43,6 +43,61 @@ CREATE_TOOL = {
 }
 
 
+def function_tool(
+    name: str, description: str, properties: dict[str, Any], required: list[str]
+) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": properties,
+                "required": required,
+            },
+        },
+    }
+
+
+TOOLS = [
+    CREATE_TOOL,
+    function_tool(
+        "update_todo",
+        "修改一项待办，必须使用实际稳定ID。只提交用户要求修改的字段。",
+        {
+            "todo_id": {"type": "string"},
+            "title": {"type": "string"},
+            "date_text": {
+                "type": ["string", "null"],
+                "description": "原文日期；null表示改为未安排",
+            },
+        },
+        ["todo_id"],
+    ),
+    function_tool(
+        "complete_todo",
+        "用户明确要求标记完成一项待办，使用实际稳定ID。",
+        {"todo_id": {"type": "string"}},
+        ["todo_id"],
+    ),
+    function_tool("list_todos", "查询真实待办及状态，不修改。", {}, []),
+    function_tool(
+        "plan_day",
+        "根据真实待办生成基础当天计划。只返回可选行动建议，不声称建议已安排，不写待办。空清单不虚构安排。",
+        {"suggestions": {"type": "array", "maxItems": 5, "items": {"type": "string"}}},
+        ["suggestions"],
+    ),
+    function_tool(
+        "accept_suggestion",
+        "用户明确要求将当前会话一项行动建议加入待办，使用建议稳定ID。",
+        {"suggestion_id": {"type": "string"}},
+        ["suggestion_id"],
+    ),
+]
+
+
 class ModelError(Exception):
     pass
 
@@ -73,7 +128,7 @@ async def call_model(
                         "model": MODEL,
                         "messages": messages,
                         "enable_thinking": False,
-                        "tools": [CREATE_TOOL],
+                        "tools": TOOLS,
                         "tool_choice": "auto",
                         "max_tokens": 1800,
                     },

@@ -12,6 +12,7 @@ from pathlib import Path
 import httpx
 
 from tests.test_chat import tool_response
+from tests.test_maintenance import action, operation_response
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -73,8 +74,12 @@ def server_process(port, db_path, provider_url, api_key="fixture-key"):
 def test_real_process_restart_keeps_todos_messages_requests_and_replays(tmp_path):
     class Provider(BaseHTTPRequestHandler):
         def do_POST(self):
-            self.rfile.read(int(self.headers["Content-Length"]))
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             payload = tool_response([{"title": "整理书桌", "date_text": None}])
+            if request["messages"][-1]["content"] == "今天我该干什么":
+                payload = operation_response(
+                    "plan_day", {"suggestions": ["整理学习笔记"]}
+                )
             body = json.dumps(payload).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -101,12 +106,47 @@ def test_real_process_restart_keeps_todos_messages_requests_and_replays(tmp_path
             before = c.get("/api/todos").json()
             assert len(before) == 1
             assert c.get("/api/runs/persisted-request").json()["status"] == "completed"
+            action(
+                c,
+                session,
+                "edit",
+                "update_todo",
+                {"todo_id": before[0]["id"], "title": "整理书架"},
+            )
+            c.post(
+                f"/api/sessions/{session}/messages",
+                json={"request_id": "plan", "content": "今天我该干什么"},
+            ).raise_for_status()
+            c.get("/api/runs/plan/events")
+            suggestions = c.get(f"/api/sessions/{session}/suggestions").json()
+            action(
+                c,
+                session,
+                "accept",
+                "accept_suggestion",
+                {"suggestion_id": suggestions[0]["id"]},
+            )
+            action(c, session, "done", "complete_todo", {"todo_id": before[0]["id"]})
+            before = c.get("/api/todos").json()
+            assert len(before) == 2 and before[0]["status"] == "completed"
         assert process.poll() is not None
         # Restart with no model credential: reads and replay must still work.
         with server_process(port, database, url, api_key="") as (c, restarted):
             assert restarted.pid != original_pid
             assert c.get("/api/todos").json() == before
-            assert len(c.get(f"/api/sessions/{session}").json()["messages"]) == 2
+            assert len(c.get(f"/api/sessions/{session}").json()["messages"]) == 10
+            again, events = action(
+                c,
+                session,
+                "accept-after-restart",
+                "accept_suggestion",
+                {"suggestion_id": suggestions[0]["id"]},
+            )
+            assert not again["todo_ids"] and "event: saved" not in events
+            assert (
+                c.get(f"/api/sessions/{session}/suggestions").json()[0]["todo_id"]
+                == before[1]["id"]
+            )
             replay = c.post(f"/api/sessions/{session}/messages", json=body).json()
             assert replay["todo_ids"] == [before[0]["id"]]
             new_session = c.post("/api/sessions").json()["id"]

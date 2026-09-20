@@ -11,8 +11,137 @@ type Todo = {
   source: { content: string; message_id: string; session_id: string };
 };
 type Run = { id: string; status: string; reply: string; todo_ids: string[] };
-type Pending = { session: string; request_id: string; content: string };
+type Action = {
+  tool: "update_todo" | "complete_todo" | "accept_suggestion";
+  arguments: Record<string, unknown>;
+};
+type Pending = {
+  session: string;
+  request_id: string;
+  content: string;
+  action?: Action;
+};
 type Health = { model_configured: boolean; timezone: string };
+type Overview = { today: string; groups: Record<string, Todo[]> };
+type Suggestion = {
+  id: string;
+  title: string;
+  scheduled_date: string;
+  todo_id: string | null;
+};
+const groups: Record<string, string> = {
+  today: "今日未完成",
+  overdue: "逾期未完成",
+  unscheduled: "未安排",
+  upcoming: "未来安排",
+  completed: "已完成",
+};
+
+function TodoCard({
+  todo,
+  disabled,
+  act,
+}: {
+  todo: Todo;
+  disabled: boolean;
+  act: (content: string, action: Action) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(todo.title);
+  const [date, setDate] = useState(todo.scheduled_date || "");
+  return (
+    <li>
+      <div className="todo-title">
+        <span className="checkbox">
+          {todo.status === "completed" ? "✓" : ""}
+        </span>
+        <h3>{todo.title}</h3>
+      </div>
+      <div className="meta">
+        <time>{todo.scheduled_date || "未安排"}</time>
+        <span>{todo.status === "completed" ? "已完成" : "待完成"}</span>
+      </div>
+      <div className="todo-actions">
+        <button
+          className="quiet"
+          disabled={disabled}
+          onClick={() => {
+            setTitle(todo.title);
+            setDate(todo.scheduled_date || "");
+            setEditing(!editing);
+          }}
+        >
+          编辑
+        </button>
+        {todo.status !== "completed" && (
+          <button
+            className="quiet"
+            disabled={disabled}
+            onClick={() =>
+              act(`完成待办：${todo.title}`, {
+                tool: "complete_todo",
+                arguments: { todo_id: todo.id },
+              })
+            }
+          >
+            标记完成
+          </button>
+        )}
+      </div>
+      {editing && (
+        <form
+          className="todo-editor"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const arguments_: Record<string, unknown> = { todo_id: todo.id };
+            if (title.trim() !== todo.title) arguments_.title = title.trim();
+            if (date !== (todo.scheduled_date || ""))
+              arguments_.date_text = date || null;
+            if (Object.keys(arguments_).length > 1)
+              act(
+                `修改待办：${todo.title} → ${title.trim()}，${date || "未安排"}`,
+                { tool: "update_todo", arguments: arguments_ },
+              );
+            setEditing(false);
+          }}
+        >
+          <label>
+            标题
+            <input
+              aria-label="待办标题"
+              required
+              maxLength={200}
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
+          </label>
+          <label>
+            安排日期
+            <input
+              aria-label="安排日期"
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </label>
+          <small>清空日期后归入未安排</small>
+          <button className="primary" disabled={disabled || !title.trim()}>
+            保存修改
+          </button>
+        </form>
+      )}
+      <details>
+        <summary>查看来源与标识</summary>
+        <p>{todo.source.content}</p>
+        <small>
+          待办 {todo.id}
+          <br />
+          消息 {todo.source.message_id}
+        </small>
+      </details>
+    </li>
+  );
+}
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(
@@ -38,6 +167,8 @@ function App() {
   const [session, setSession] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState("准备就绪");
@@ -48,12 +179,15 @@ function App() {
   const stream = useRef<EventSource | null>(null);
 
   async function refresh(id: string) {
-    const [data, items] = await Promise.all([
+    const [data, summary, ideas] = await Promise.all([
       api<{ messages: Message[] }>(`/sessions/${id}`),
-      api<Todo[]>("/todos"),
+      api<Overview>("/todos/overview"),
+      api<Suggestion[]>(`/sessions/${id}/suggestions`),
     ]);
     setMessages(data.messages);
-    setTodos(items);
+    setTodos(Object.values(summary.groups).flat());
+    setOverview(summary);
+    setSuggestions(ideas);
   }
 
   async function newSession() {
@@ -61,6 +195,7 @@ function App() {
     localStorage.setItem("assistant-session", created.id);
     setSession(created.id);
     setMessages([]);
+    setSuggestions([]);
     setPhase("准备就绪");
     setSavedCount(null);
     return created.id;
@@ -82,7 +217,7 @@ function App() {
     const events = new EventSource(`/api/runs/${operation.request_id}/events`);
     stream.current = events;
     events.addEventListener("role", () => setPhase("主 Agent 正在处理"));
-    events.addEventListener("tool_call", () => setPhase("正在保存待办"));
+    events.addEventListener("tool_call", () => setPhase("正在处理待办或计划"));
     events.addEventListener("saved", () => setPhase("保存已提交，正在读回"));
     events.addEventListener("terminal", () => {
       void finish(operation.request_id, operation.session).catch(failed);
@@ -109,6 +244,7 @@ function App() {
       const run = await api<Run>(`/sessions/${operation.session}/messages`, {
         request_id: operation.request_id,
         content: operation.content,
+        action: operation.action,
       });
       setInput("");
       await refresh(operation.session);
@@ -119,16 +255,35 @@ function App() {
     }
   }
 
+  function act(content: string, action?: Action) {
+    if (!session || busy || pending) return;
+    void send({ session, request_id: crypto.randomUUID(), content, action });
+  }
+
+  useEffect(() => {
+    if (!session) return;
+    const update = () => {
+      void refresh(session).catch(failed);
+    };
+    const timer = window.setInterval(update, 60000);
+    window.addEventListener("focus", update);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", update);
+    };
+  }, [session]);
+
   useEffect(() => {
     let disposed = false;
     async function init() {
-      const [status, items] = await Promise.all([
+      const [status, summary] = await Promise.all([
         api<Health>("/health"),
-        api<Todo[]>("/todos"),
+        api<Overview>("/todos/overview"),
       ]);
       if (disposed) return;
       setHealth(status);
-      setTodos(items);
+      setTodos(Object.values(summary.groups).flat());
+      setOverview(summary);
       let id = localStorage.getItem("assistant-session");
       if (id) {
         try {
@@ -202,7 +357,7 @@ function App() {
           </div>
           <div className="status" role="status">
             <span className={busy ? "pulse" : ""}>●</span> {phase}
-            {savedCount !== null && <span> · 本轮新增 {savedCount} 项</span>}
+            {savedCount !== null && <span> · 本轮保存 {savedCount} 项</span>}
           </div>
           {error && (
             <div className="error" role="alert">
@@ -242,6 +397,37 @@ function App() {
               </button>
             </div>
           </form>
+          <section className="suggestions" aria-label="行动建议">
+            <div className="panel-head">
+              <h2>当天计划与行动建议</h2>
+              <button
+                className="quiet"
+                disabled={!session || busy || !!pending}
+                onClick={() => act("今天我该干什么？")}
+              >
+                生成当天计划
+              </button>
+            </div>
+            <p className="list-note">建议需明确加入才会成为待办。</p>
+            {suggestions.map((idea) => (
+              <article key={idea.id} className="suggestion">
+                <p>{idea.title}</p>
+                <small>加入后安排在 {idea.scheduled_date}</small>
+                <button
+                  className="quiet"
+                  disabled={busy || !!pending || !!idea.todo_id}
+                  onClick={() =>
+                    act(`把建议 ${idea.id} 加入待办`, {
+                      tool: "accept_suggestion",
+                      arguments: { suggestion_id: idea.id },
+                    })
+                  }
+                >
+                  {idea.todo_id ? "已加入" : "加入待办"}
+                </button>
+              </article>
+            ))}
+          </section>
         </section>
         <aside className="panel todos" aria-label="待办列表">
           <div className="panel-head">
@@ -250,15 +436,14 @@ function App() {
             </h2>
             <button
               className="quiet"
-              onClick={() =>
-                void api<Todo[]>("/todos").then(setTodos).catch(failed)
-              }
+              onClick={() => void refresh(session).catch(failed)}
             >
               刷新
             </button>
           </div>
           <p className="list-note">
-            跨会话保留 · {health?.timezone || "Asia/Shanghai"}
+            跨会话保留 · {health?.timezone || "Asia/Shanghai"} ·{" "}
+            {overview?.today}
           </p>
           {!todos.length && (
             <div className="empty">
@@ -267,25 +452,26 @@ function App() {
               <p>告诉助理你的安排，保存后会显示在这里。</p>
             </div>
           )}
-          <ul>
-            {todos.map((todo) => (
-              <li key={todo.id}>
-                <div className="todo-title">
-                  <span className="checkbox" />
-                  <h3>{todo.title}</h3>
-                </div>
-                <div className="meta">
-                  <time>{todo.scheduled_date || "未安排"}</time>
-                  <span>{todo.status === "pending" ? "待完成" : "已完成"}</span>
-                </div>
-                <details>
-                  <summary>查看来源</summary>
-                  <p>{todo.source.content}</p>
-                  <small>消息 {todo.source.message_id}</small>
-                </details>
-              </li>
-            ))}
-          </ul>
+          {Object.entries(groups).map(([key, label]) => (
+            <section key={key} aria-label={label} className="todo-group">
+              <h3>
+                {label}{" "}
+                <span className="count">
+                  {overview?.groups[key]?.length || 0}
+                </span>
+              </h3>
+              <ul>
+                {(overview?.groups[key] || []).map((todo) => (
+                  <TodoCard
+                    key={todo.id}
+                    todo={todo}
+                    disabled={busy || !!pending}
+                    act={act}
+                  />
+                ))}
+              </ul>
+            </section>
+          ))}
           <p className="footnote">这里展示的是实际保存结果。</p>
         </aside>
       </div>

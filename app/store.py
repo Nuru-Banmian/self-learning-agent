@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app.todos import Clarification
+
 
 class Conflict(Exception):
     pass
@@ -41,7 +43,14 @@ class Store:
                     seq INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id TEXT NOT NULL REFERENCES runs, kind TEXT NOT NULL,
                     data TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS suggestions (
+                    id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs,
+                    title TEXT NOT NULL, scheduled_date TEXT NOT NULL,
+                    todo_id TEXT REFERENCES todos);
             """)
+            columns = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
+            if "action" not in columns:
+                db.execute("ALTER TABLE runs ADD COLUMN action TEXT")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -78,9 +87,33 @@ class Store:
             row = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
             if row is None:
                 return None
-            return dict(row) | {"todo_ids": json.loads(row["todo_ids"])}
+            return dict(row) | {
+                "todo_ids": json.loads(row["todo_ids"]),
+                "action": json.loads(row["action"]) if row["action"] else None,
+            }
 
-    def claim(self, run_id: str, session_id: str, content: str, now: str) -> bool:
+    def suggestions(self, session_id: str) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            return [
+                dict(r)
+                for r in db.execute(
+                    "SELECT s.* FROM suggestions s JOIN runs r ON r.id=s.run_id "
+                    "WHERE r.session_id=? ORDER BY s.rowid",
+                    (session_id,),
+                )
+            ]
+
+    def claim(
+        self,
+        run_id: str,
+        session_id: str,
+        content: str,
+        now: str,
+        action: dict[str, Any] | None = None,
+    ) -> bool:
+        encoded = (
+            json.dumps(action, sort_keys=True, ensure_ascii=False) if action else None
+        )
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
@@ -88,6 +121,7 @@ class Store:
                 if (
                     existing["session_id"] != session_id
                     or existing["content"] != content
+                    or existing["action"] != encoded
                 ):
                     raise Conflict("请求标识已用于其他消息，请使用新的标识。")
                 return False
@@ -107,6 +141,7 @@ class Store:
                 "VALUES(?,?,?,?,?,'running')",
                 (run_id, session_id, message_id, content, now),
             )
+            db.execute("UPDATE runs SET action=? WHERE id=?", (encoded, run_id))
             self._event(db, run_id, "role", {"role": "main", "status": "processing"})
             return True
 
@@ -144,6 +179,11 @@ class Store:
         reply: str,
         items: list[dict[str, Any]] | None = None,
         error: str | None = None,
+        *,
+        change: dict[str, Any] | None = None,
+        tool: str = "create_todos",
+        suggestions: list[dict[str, Any]] | None = None,
+        accept: str | None = None,
     ) -> None:
         # Todos, success evidence, assistant message and terminal state commit together.
         with self.connect() as db:
@@ -152,6 +192,52 @@ class Store:
             if run is None or run["status"] != "running":
                 return
             ids = []
+            if accept:
+                suggestion = db.execute(
+                    "SELECT s.* FROM suggestions s JOIN runs r ON r.id=s.run_id "
+                    "WHERE s.id=? AND r.session_id=?",
+                    (accept, run["session_id"]),
+                ).fetchone()
+                if suggestion is None:
+                    raise Clarification("请指定当前会话中的建议，本次未新增。")
+                if suggestion["todo_id"]:
+                    raise Clarification("这项建议已经加入待办，本次没有重复新增。")
+                items = [
+                    {
+                        "title": suggestion["title"],
+                        "scheduled_date": suggestion["scheduled_date"],
+                    }
+                ]
+                reply = (
+                    f"已保存：{suggestion['title']} — {suggestion['scheduled_date']}"
+                )
+            if change:
+                todo = db.execute(
+                    "SELECT * FROM todos WHERE id=?", (change["id"],)
+                ).fetchone()
+                if todo is None:
+                    raise Clarification("请刷新列表，指定存在的待办，本次未修改。")
+                db.execute(
+                    "UPDATE todos SET title=?,scheduled_date=?,status=?,updated_at=? "
+                    "WHERE id=?",
+                    (
+                        change.get("title", todo["title"]),
+                        change.get("scheduled_date", todo["scheduled_date"]),
+                        change.get("status", todo["status"]),
+                        run["received_at"],
+                        todo["id"],
+                    ),
+                )
+                ids.append(todo["id"])
+                reply = (
+                    f"已更新：{change.get('title', todo['title'])} — "
+                    + (change.get("scheduled_date", todo["scheduled_date"]) or "未安排")
+                    + (
+                        " — 已完成"
+                        if change.get("status", todo["status"]) == "completed"
+                        else " — 待完成"
+                    )
+                )
             for item in items or []:
                 todo_id = str(uuid4())
                 ids.append(todo_id)
@@ -166,13 +252,38 @@ class Store:
                         run["received_at"],
                     ),
                 )
-            if items:
+                if accept:
+                    db.execute(
+                        "UPDATE suggestions SET todo_id=? WHERE id=?", (todo_id, accept)
+                    )
+            if suggestions is not None:
+                for suggestion in suggestions:
+                    db.execute(
+                        "INSERT INTO suggestions VALUES(?,?,?,?,NULL)",
+                        (
+                            suggestion["id"],
+                            run_id,
+                            suggestion["title"],
+                            suggestion["scheduled_date"],
+                        ),
+                    )
                 self._event(
                     db,
                     run_id,
                     "tool_result",
                     {
-                        "tool": "create_todos",
+                        "tool": "plan_day",
+                        "status": "success",
+                        "suggestions": suggestions,
+                    },
+                )
+            if items or change:
+                self._event(
+                    db,
+                    run_id,
+                    "tool_result",
+                    {
+                        "tool": tool,
                         "status": "success",
                         "todo_ids": ids,
                     },
