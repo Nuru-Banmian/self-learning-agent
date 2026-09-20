@@ -417,3 +417,28 @@ footer {
     padding: 18px;
   }
 }
+.memory-panel {
+  margin-top: 24px;
+  padding: 24px;
+}
+.memory-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+}
+.memory-card {
+  padding: 16px 0;
+  border-bottom: 1px solid #e0e5dc;
+  overflow-wrap: anywhere;
+}
+.memory-card h3 {
+  font-size: 16px;
+}
+.memory-card p {
+  white-space: pre-wrap;
+}
+@media (max-width: 700px) {
+  .memory-columns {
+    grid-template-columns: 1fr;
+  }
+}

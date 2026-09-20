@@ -2,10 +2,12 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app.memory_policy import fact_attribute
 from app.todos import Clarification
 
 
@@ -47,10 +49,21 @@ class Store:
                     id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs,
                     title TEXT NOT NULL, scheduled_date TEXT NOT NULL,
                     todo_id TEXT REFERENCES todos);
+                CREATE TABLE IF NOT EXISTS memories (
+                    id TEXT PRIMARY KEY, content TEXT NOT NULL, category TEXT NOT NULL,
+                    topic TEXT NOT NULL, scope TEXT NOT NULL,
+                    task_id TEXT REFERENCES todos,
+                    valid_from TEXT NOT NULL, expires_at TEXT, state TEXT NOT NULL,
+                    message_id TEXT NOT NULL REFERENCES messages,
+                    updated_at TEXT NOT NULL);
             """)
             columns = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
             if "action" not in columns:
                 db.execute("ALTER TABLE runs ADD COLUMN action TEXT")
+            if "memory" not in columns:
+                db.execute(
+                    "ALTER TABLE runs ADD COLUMN memory TEXT NOT NULL DEFAULT '{}'"
+                )
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -80,7 +93,14 @@ class Store:
                 "SELECT * FROM messages WHERE session_id=? ORDER BY rowid",
                 (session_id,),
             ).fetchall()
-            return dict(row) | {"messages": [dict(m) for m in messages]}
+            latest = db.execute(
+                "SELECT id FROM runs WHERE session_id=? ORDER BY rowid DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            return dict(row) | {
+                "messages": [dict(m) for m in messages],
+                "latest_run_id": latest[0] if latest else None,
+            }
 
     def run(self, run_id: str) -> dict[str, Any] | None:
         with self.connect() as db:
@@ -90,7 +110,128 @@ class Store:
             return dict(row) | {
                 "todo_ids": json.loads(row["todo_ids"]),
                 "action": json.loads(row["action"]) if row["action"] else None,
+                "memory": json.loads(row["memory"]),
             }
+
+    def memories(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT x.*,m.content AS source_content,m.session_id FROM memories x "
+                "JOIN messages m ON x.message_id=m.id ORDER BY x.rowid"
+            ).fetchall()
+            return [
+                dict(r)
+                | {
+                    "source": {
+                        "message_id": r["message_id"],
+                        "session_id": r["session_id"],
+                        "content": r["source_content"],
+                    }
+                }
+                for r in rows
+            ]
+
+    def memory_record(self, run_id: str, **changes: Any) -> None:
+        with self.connect() as db:
+            row = db.execute("SELECT memory FROM runs WHERE id=?", (run_id,)).fetchone()
+            record = json.loads(row[0]) | changes
+            db.execute(
+                "UPDATE runs SET memory=? WHERE id=?",
+                (
+                    json.dumps(record, ensure_ascii=False),
+                    run_id,
+                ),
+            )
+            self._event(db, run_id, "memory", record)
+
+    def save_memories(
+        self, run_id: str, candidates: list[dict[str, Any]], rejected: int
+    ) -> None:
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            run = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+            saved = []
+            conflicts = []
+            for c in candidates:
+                previous = db.execute(
+                    "SELECT * FROM memories WHERE category=? AND scope=? "
+                    "AND task_id IS ? AND state IN ('active','conflict')",
+                    (c["category"], c["scope"], c["task_id"]),
+                ).fetchall()
+                previous = [
+                    p
+                    for p in previous
+                    if (
+                        p["expires_at"] is None
+                        or datetime.fromisoformat(p["expires_at"])
+                        > datetime.fromisoformat(c["valid_from"])
+                    )
+                    and (
+                        c["expires_at"] is None
+                        or datetime.fromisoformat(p["valid_from"])
+                        < datetime.fromisoformat(c["expires_at"])
+                    )
+                ]
+                if any(p["content"] == c["content"] for p in previous):
+                    continue
+                # Conservatively quarantine overlapping topics, rather than silently
+                # replacing a preference; explicit correction belongs to Issue #5.
+                overlap = [
+                    p
+                    for p in previous
+                    if (
+                        p["topic"] in c["content"]
+                        or c["topic"] in p["content"]
+                        or (
+                            fact_attribute(c["content"]) is not None
+                            and fact_attribute(c["content"])
+                            == fact_attribute(p["content"])
+                        )
+                    )
+                ]
+                state = "conflict" if overlap else "active"
+                for p in overlap:
+                    db.execute(
+                        "UPDATE memories SET state='conflict' WHERE id=?", (p["id"],)
+                    )
+                    conflicts.append(p["id"])
+                memory_id = str(uuid4())
+                db.execute(
+                    "INSERT INTO memories VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        memory_id,
+                        c["content"],
+                        c["category"],
+                        c["topic"],
+                        c["scope"],
+                        c["task_id"],
+                        c["valid_from"],
+                        c["expires_at"],
+                        state,
+                        run["message_id"],
+                        run["received_at"],
+                    ),
+                )
+                saved.append(memory_id)
+                if overlap:
+                    conflicts.append(memory_id)
+            record = json.loads(run["memory"]) | {
+                "learning": "saved" if saved else "empty",
+                "saved_ids": saved,
+                "rejected": rejected,
+                "conflict_ids": conflicts,
+                "effect_verified": False,
+            }
+            db.execute(
+                "UPDATE runs SET memory=? WHERE id=?",
+                (
+                    json.dumps(record, ensure_ascii=False),
+                    run_id,
+                ),
+            )
+            if saved:
+                self._event(db, run_id, "memory_saved", {"memory_ids": saved})
+            self._event(db, run_id, "memory", record)
 
     def suggestions(self, session_id: str) -> list[dict[str, Any]]:
         with self.connect() as db:
@@ -289,6 +430,20 @@ class Store:
                     },
                 )
                 self._event(db, run_id, "saved", {"todo_ids": ids})
+            memory = json.loads(run["memory"])
+            if status == "failed" and memory.get("saved_ids"):
+                status = "partial"
+                reply += "\n\n记忆已提交保存，但本轮其他处理未完成。"
+            if status == "completed" and memory.get("learning") == "failed":
+                status, error = "partial", "memory_learning"
+                reply += "\n\n本轮学习保存失败，未新增记忆；回答与待办结果仍可查看。"
+            if memory.get("conflict_ids"):
+                reply += "\n\n发现可能冲突的记忆，已暂停这些记忆生效，请澄清适用范围。"
+            if memory.get("rejected"):
+                reply += (
+                    "\n\n部分记忆候选无法核实，未保存；"
+                    "请用完整陈述明确背景、偏好或条件。"
+                )
             db.execute(
                 "INSERT INTO messages VALUES(?,?,'assistant',?,?)",
                 (

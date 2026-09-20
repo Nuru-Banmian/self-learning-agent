@@ -10,7 +10,37 @@ type Todo = {
   status: string;
   source: { content: string; message_id: string; session_id: string };
 };
-type Run = { id: string; status: string; reply: string; todo_ids: string[] };
+type Memory = {
+  id: string;
+  content: string;
+  category: string;
+  scope: string;
+  topic: string;
+  task_id: string | null;
+  valid_from: string;
+  expires_at: string | null;
+  state: string;
+  active: boolean;
+  source: { content: string; message_id: string; session_id: string };
+};
+type MemoryEvidence = {
+  learning?: string;
+  saved_ids?: string[];
+  loaded?: Memory[];
+  usage?: { memory_id: string; reason: string }[];
+};
+type Run = {
+  id: string;
+  status: string;
+  reply: string;
+  todo_ids: string[];
+  memory: MemoryEvidence;
+};
+const memoryCategories: Record<string, string> = {
+  preference: "持续偏好",
+  background: "背景",
+  condition: "临时条件",
+};
 type Action = {
   tool: "update_todo" | "complete_todo" | "accept_suggestion";
   arguments: Record<string, unknown>;
@@ -176,18 +206,28 @@ function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [savedCount, setSavedCount] = useState<number | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  const [memories, setMemories] = useState<Memory[]>([]);
+  const [evidence, setEvidence] = useState<MemoryEvidence | null>(null);
   const stream = useRef<EventSource | null>(null);
 
   async function refresh(id: string) {
-    const [data, summary, ideas] = await Promise.all([
-      api<{ messages: Message[] }>(`/sessions/${id}`),
+    const [data, summary, ideas, savedMemories] = await Promise.all([
+      api<{ messages: Message[]; latest_run_id: string | null }>(
+        `/sessions/${id}`,
+      ),
       api<Overview>("/todos/overview"),
       api<Suggestion[]>(`/sessions/${id}/suggestions`),
+      api<Memory[]>("/memories"),
     ]);
     setMessages(data.messages);
     setTodos(Object.values(summary.groups).flat());
     setOverview(summary);
     setSuggestions(ideas);
+    setMemories(savedMemories);
+    if (data.latest_run_id) {
+      const latest = await api<Run>(`/runs/${data.latest_run_id}`);
+      setEvidence(latest.memory);
+    } else setEvidence(null);
   }
 
   async function newSession() {
@@ -198,6 +238,8 @@ function App() {
     setSuggestions([]);
     setPhase("准备就绪");
     setSavedCount(null);
+    setEvidence(null);
+    setMemories(await api<Memory[]>("/memories"));
     return created.id;
   }
 
@@ -206,7 +248,13 @@ function App() {
     const run = await api<Run>(`/runs/${runId}`);
     await refresh(sessionId);
     setSavedCount(run.todo_ids.length);
-    setPhase(run.status === "completed" ? "处理完成" : "处理失败");
+    setPhase(
+      run.status === "completed"
+        ? "处理完成"
+        : run.status === "partial"
+          ? "部分完成"
+          : "处理失败",
+    );
     setBusy(false);
     setPending(null);
     localStorage.removeItem("assistant-pending");
@@ -216,7 +264,15 @@ function App() {
     stream.current?.close();
     const events = new EventSource(`/api/runs/${operation.request_id}/events`);
     stream.current = events;
-    events.addEventListener("role", () => setPhase("主 Agent 正在处理"));
+    events.addEventListener("role", (event) => {
+      const data = JSON.parse((event as MessageEvent).data);
+      setPhase(
+        data.role === "learning"
+          ? "学习 Agent 正在整理记忆"
+          : "主 Agent 正在处理",
+      );
+    });
+    events.addEventListener("memory_saved", () => setPhase("记忆保存已提交"));
     events.addEventListener("tool_call", () => setPhase("正在处理待办或计划"));
     events.addEventListener("saved", () => setPhase("保存已提交，正在读回"));
     events.addEventListener("terminal", () => {
@@ -357,7 +413,9 @@ function App() {
           </div>
           <div className="status" role="status">
             <span className={busy ? "pulse" : ""}>●</span> {phase}
-            {savedCount !== null && <span> · 本轮保存 {savedCount} 项</span>}
+            {savedCount !== null && (
+              <span> · 本轮保存 {savedCount} 项待办</span>
+            )}
           </div>
           {error && (
             <div className="error" role="alert">
@@ -475,6 +533,79 @@ function App() {
           <p className="footnote">这里展示的是实际保存结果。</p>
         </aside>
       </div>
+      <section className="panel memory-panel" aria-label="学到了什么">
+        <div className="panel-head">
+          <h2>学到了什么</h2>
+          <span className="count">{memories.length}</span>
+        </div>
+        <p className="list-note">从普通聊天整理 · 保存内容与本次采用分开展示</p>
+        <div className="memory-columns">
+          <div>
+            <h3>已保存的记忆</h3>
+            {!memories.length && (
+              <p>聊聊你的背景、资料偏好或今天的时间条件。</p>
+            )}
+            {memories.map((memory) => (
+              <article className="memory-card" key={memory.id}>
+                <h3>{memory.content}</h3>
+                <p>
+                  {memoryCategories[memory.category]} ·{" "}
+                  {memory.scope === "task" ? "任务限定" : "一般范围"} ·{" "}
+                  {memory.active
+                    ? "生效中"
+                    : memory.state === "conflict"
+                      ? "冲突待澄清"
+                      : "当前不生效"}
+                </p>
+                <small>
+                  主题：{memory.topic}
+                  <br />
+                  生效：{memory.valid_from}
+                  <br />
+                  {memory.expires_at
+                    ? `截止：${memory.expires_at}`
+                    : memory.scope === "task"
+                      ? "对应任务完成后失效"
+                      : "持续有效"}
+                </small>
+                {memory.task_id && <p>对应待办：{memory.task_id}</p>}
+                <details>
+                  <summary>来源表达与标识</summary>
+                  <p>{memory.source.content}</p>
+                  <small>
+                    消息 {memory.source.message_id}
+                    <br />
+                    会话 {memory.source.session_id}
+                    <br />
+                    记忆 {memory.id}
+                  </small>
+                </details>
+              </article>
+            ))}
+          </div>
+          <div aria-label="本次记忆使用">
+            <h3>本次加载与采用</h3>
+            <p>
+              {evidence?.learning === "failed"
+                ? "本轮学习保存失败"
+                : `本轮新保存 ${evidence?.saved_ids?.length || 0} 条记忆`}
+            </p>
+            <p>此次加载 {evidence?.loaded?.length || 0} 条生效记忆</p>
+            {evidence?.loaded?.map((memory) => (
+              <article className="memory-card" key={memory.id}>
+                <p>{memory.content}</p>
+                <small>来源消息 {memory.source.message_id}</small>
+                <p>
+                  采用说明：
+                  {evidence.usage?.find((u) => u.memory_id === memory.id)
+                    ?.reason || "未报告采用"}
+                </p>
+              </article>
+            ))}
+            <p className="footnote">采用说明由主 Agent 报告，效果尚未验证。</p>
+          </div>
+        </div>
+      </section>
       <footer>
         日常 / 个人工作台 <span>从今天开始，慢慢做好每件事。</span>
       </footer>
