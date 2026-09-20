@@ -60,7 +60,8 @@ def explicit_search(content: str) -> bool:
 
 def task_count(content: str) -> tuple[int, int]:
     match = re.search(
-        r"(?:给|生成|推荐|提供|只要|只需).{0,8}?([一二两三四五1-5])(?:个|项)(?:小)?(?:任务|练习)",
+        r"(?:给|生成|推荐|提供|只要|只需).{0,8}?([一二两三四五1-5])"
+        r"(?:个|项)(?:可选)?(?:学习)?(?:小)?(?:任务|练习)",
         content,
     )
     if match:

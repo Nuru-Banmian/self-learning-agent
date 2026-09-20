@@ -456,19 +456,36 @@ def test_questions_about_search_and_opt_out_do_not_force_external_calls(
         assert not any(r[0].url.host == "cloud-iqs.aliyuncs.com" for r in requests)
 
 
-def test_learning_plan_offers_multiple_tasks_and_user_can_pick_two(tmp_path):
+@pytest.mark.parametrize("count", [3, 4, 5])
+def test_learning_plan_offers_multiple_tasks_and_user_can_pick_two(tmp_path, count):
     requests = []
-    with research_client(tmp_path, requests) as c:
+    exercises = [
+        "编写生成前三个平方数的生成器",
+        "逐次调用 next 并记录输出",
+        "对比列表与生成器的内存占用",
+        "阅读生成器表达式文档并整理语法",
+        "编写测试检查生成器耗尽后的行为",
+    ][:count]
+    final = operation_response(
+        "research_answer",
+        {
+            "steps": [{"instruction": "阅读生成器文档", "source_ids": ["S1"]}],
+            "exercises": exercises,
+            "memory_usage": [],
+        },
+    )
+    with research_client(tmp_path, requests, final=final) as c:
         run, _ = submit(c, "搜索 Python 生成器资料，生成可选学习任务")
         assert run["status"] == "completed"
         schema = requests[-1][1]["tools"][0]["function"]["parameters"]
         assert schema["properties"]["exercises"]["minItems"] == 3
+        assert schema["properties"]["exercises"]["maxItems"] == 5
         session = run["session_id"]
         ideas = c.get(f"/api/sessions/{session}/suggestions").json()
-        assert len(ideas) == 3
+        assert len(ideas) == count
         assert c.get("/api/todos").json() == []
         for i in (0, 2):
-            chosen, _ = action(
+            chosen, events = action(
                 c,
                 session,
                 f"pick-{i}",
@@ -476,18 +493,37 @@ def test_learning_plan_offers_multiple_tasks_and_user_can_pick_two(tmp_path):
                 {"suggestion_id": ideas[i]["id"]},
             )
             assert chosen["status"] == "completed"
-        assert {t["title"] for t in c.get("/api/todos").json()} == {
+            replay, replay_events = action(
+                c,
+                session,
+                f"pick-{i}",
+                "accept_suggestion",
+                {"suggestion_id": ideas[i]["id"]},
+            )
+            assert replay == chosen and replay_events == events
+            repeated, _ = action(
+                c,
+                session,
+                f"repeat-{i}",
+                "accept_suggestion",
+                {"suggestion_id": ideas[i]["id"]},
+            )
+            assert repeated["todo_ids"] == []
+            assert "已经加入待办" in repeated["reply"]
+        todos = c.get("/api/todos").json()
+        assert len(todos) == 2
+        assert {t["title"] for t in todos} == {
             "编写生成前三个平方数的生成器",
             "对比列表与生成器的内存占用",
         }
-        assert (
-            c.get(f"/api/sessions/{session}/suggestions").json()[1]["todo_id"] is None
-        )
+        saved_ideas = c.get(f"/api/sessions/{session}/suggestions").json()
+        assert [i for i, idea in enumerate(saved_ideas) if idea["todo_id"]] == [0, 2]
 
 
-def test_explicit_number_of_optional_tasks_is_respected(tmp_path):
+@pytest.mark.parametrize("tasks", ["两个任务", "两个学习任务", "两个可选学习任务"])
+def test_explicit_number_of_optional_tasks_is_respected(tmp_path, tasks):
     with research_client(tmp_path, []) as c:
-        run, _ = submit(c, "搜索 Python 生成器资料，给我两个任务")
+        run, _ = submit(c, f"搜索 Python 生成器资料，给我{tasks}")
         assert run["status"] == "completed"
         ideas = c.get(f"/api/sessions/{run['session_id']}/suggestions").json()
         assert len(ideas) == 2
