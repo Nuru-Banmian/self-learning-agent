@@ -12,6 +12,8 @@
 
 Issue #8 已补充持久排队、断线/重启状态恢复和安全重试，详情见 [验收记录](docs/acceptance/issue-8.md)。
 
+Issue #9 已补充学习证据、跨会话对比和人工检查点，本地最终测试175项通过；两条主线已用真实百炼与模拟信息服务验证。真实IQS、和风及大陆无代理验收仍有缺口，首版尚未完整交付，见 [逐项验收证据](docs/acceptance/issue-9.md) 与 [复演说明](docs/acceptance/issue-9-demo.md)。
+
 需要 Python 3.13 和 Node.js 22.12+。
 
 ```powershell

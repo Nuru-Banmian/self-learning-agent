@@ -27,7 +27,7 @@
 | AC-08 三角色与状态 | `test_evidence.py` model_result 模式/用量/脱敏；各角色 HTTP/SSE 测试 | learn 真实学习+主角色，research 主+执行；partial/empty/error 与结果一致 | 本轮聊天、记忆、搜索/天气依据和请求状态可见 | 真实百炼通过，IQS/和风跳过，大陆未验证 |
 | AC-09 资料与来源 | `test_research.py` 实际工具响应来源、摘要/正文、部分失败、预算和只读范围 | 百炼+模拟IQS：plan/transfer/corrected/deleted，查询及引用对应 | 本轮显示查询、来源、正文标记与可选练习 | **真实 IQS skipped；大陆 unverified** |
 | AC-10 外出与天气 | `test_weather.py` 明确地点/日期、重名、时区、超范围、失败、无结果 | 百炼+模拟和风：outing/resolved success；ambiguous/outside empty；weather-failure error | 本轮上海外出主线；历史 #7 重名/超范围/失败浏览器证据复用 | **真实和风 skipped；大陆 unverified** |
-| AC-11 失败与重复请求 | `test_reliability.py`、`test_run_recovery.py`、`test_process_recovery.py`，检查点重放与冲突 | 同一建议接受防重复、失败不伪装天气成功 | #8 已有断网、进程中断和双标签队列；本轮新增证据交互及恢复复验见下文 | 真实供应商故障注入未做；大陆未验证 |
+| AC-11 失败与重复请求 | `test_reliability.py`、`test_run_recovery.py`、`test_process_recovery.py`，检查点重放与冲突 | 同一建议接受防重复、失败不伪装天气成功 | 本轮重跑断网、进程中断与显式重试、双标签排队；见下文 | 真实供应商故障注入未做；大陆未验证 |
 | AC-12 大陆真实联调 | 本地不作为该项替代 | 百炼固定快照工具调用/JSON Schema、用量/耗时已记录；仅本机结果 | 浏览器连本机不证明出口位置 | **整项未通过：网络位置未验证，IQS/和风配置缺失** |
 
 ## 真实组合记录与保留的失败
@@ -52,15 +52,34 @@
 - 学习聊天保存1条偏好、1条待办，存在额外候选被拒绝提示，不能表述为所有候选都保存。实际进程重启后新会话生成计划，展示搜索输入/来源/步骤/可选练习。明确点击加入后多1项，完成后移入已完成；天气主线未擅自加入准备事项。
 - 原成功运行的 transfer 检查点能恢复 baseline，左右加载分别1/0，模型相同、会话不同。浏览器另存具体人工检查点，刷新后仍可查看，默认新判定为未验证。截图初查发现面板无内边距，已补齐表单和卡片边距；属于低影响布局修正。
 - 交接前 `f98482c5c2` 数据的浏览器保存/刷新记录属于早期历史证据，本轮以成功目录副本重新验收，不能混称。
+- 新证据布局已查看桌面完整图 `output/playwright/issue9-comparison-final.png`、局部图 `issue9-evidence-desktop.png` 和窄屏图 `issue9-evidence-mobile.png`；390px视口下文档宽375px，无横向溢出，长ID和来源可换行。人工检查点保存后刷新及按钮恢复见 `issue9-checkpoint-restored.yml`。
+- 故障浏览器复验使用全模拟供应商 `tests.recovery_demo` 和独立 `output/issue9/recovery-continuation.db`。请求处理中 offline，放行模型，online/刷新后待办从1到2、状态completed；`issue9-offline.yml` 和 `issue9-offline-restored.yml` 保留过程。初次 run-code 写法错误未触发断网，改为函数形式重新执行后才计通过。
+- 浏览器等待模型时停止 PID 47068，重启 PID 43684，页面自动显示“处理已中断，未保存待办”，数量仍2；点击显式重试后数量3，原中断记录保留。证据 `issue9-interrupted.yml`、`issue9-retry-completed.yml`。断网和停止进程期间有预期网络错误，不声称浏览器零错误。
+- 同会话双标签先后提交两个不同请求：`issue9-queued.yml` 同时显示“正在处理”和“排队中 · 前面还有1轮”；放行后 `issue9-queue-completed.yml` 两轮完成，待办3→5。两次都是明确新请求，区别于同ID重放（由公开HTTP并发测试核验）。这些快照均在 `output/playwright/`。
+- Spec修复后的真实百炼+模拟IQS浏览器补验：`issue9-source-exception.yml` 中“只找视频教程，不要官方文档”加载0条长期偏好、实际查询为“Python 生成器 视频教程”；再开新会话，`issue9-preference-resumed.yml` 加载原1条偏好、实际查询再次包含官方资料。当前记忆、待办、会话、run和检查点公开读回另存 `issue9-browser-readback.json`。浏览器工具曾停在about:blank导致截图定位超时；重新导航后恢复原会话，无须重发业务请求，最终截图已重新生成并查看。
 
 ## Standards
 
-待固定基线双轴只读审查完成后记录结论。
+独立只读审查 `50803a3…81d0f38`：文档标准违反0项、可操作代码异味0项。增量 `81d0f38..8a0a6b5` 复审仍为0项，未发现违反领域术语、公开测试边界、凭据保密或角色授权的变化。
 
 ## Spec
 
-待固定基线双轴只读审查完成后记录结论。真实 IQS/和风及大陆验收缺口持续保留。
+初审1项P2：无“这次/本次”的当前明确资料例外仍被追加长期偏好，违反 SPEC.md 的“当前任务的具体要求优先于一般偏好”。公开回归最初因夹具局部变量遮蔽未产生搜索，修正夹具后准确得到失败：用户要求只找视频、不要官方文档，实际查询却追加官方偏好。修复记忆选择，使当前明确资料限制优先，持久偏好不改写；回归同时核验后续普通新会话继续使用长期偏好。
+
+修复提交 `8a0a6b5`，相关4个文件聚焦测试 **96 passed**；独立Spec复审两条关键公开回归 **2 passed**，剩余可操作代码问题0项。新增范围扩张0项。真实IQS/和风及大陆验收缺口持续保留。
 
 ## 最终门禁
 
-待审查及修复后运行最终全量、mypy、Ruff check/format、前端 build 和 diff 检查；最终结果补在此处。
+基于实现 `8a0a6b5`，审查修复后完整 `python -m pytest -q` **175 passed，2 warnings，64.56秒**。两条为既有 Starlette/httpx 与 anyio 弃用警告。mypy（14个app源文件）、Ruff check、Ruff format --check（36文件）、前端 TypeScript/Vite build、`git diff --check` 全部通过。最终全量运行一次；之后只补证据文档，不改变程序行为。
+
+| 验证层 | 最终状态 |
+| --- | --- |
+| 本地确定性 / 外部供应商模拟 | passed：175项公开接口与真实进程测试 |
+| 真实百炼+模拟IQS/和风组合 | passed：历史成功组合及本轮两主线浏览器；修复后当前例外与恢复长期偏好真实模型补验通过 |
+| 浏览器新增证据、布局与恢复 | passed：保存/刷新/基线恢复、两主线、断网、进程中断重试、双标签队列；故障期间网络报错已保留 |
+| 真实IQS | skipped：缺独立凭据 |
+| 真实和风城市/天气 | skipped：缺独立凭据与Host |
+| 中国大陆无代理网络 | unverified：无法确认出口位置；AC-12未通过 |
+| 首版完整交付 | **未达成**：真实信息服务与大陆网络仍为必要缺口 |
+
+Standards 0项；Spec 初审1项P2已修复，复审0项剩余代码问题。Issue #9保持OPEN，后续真实服务验证须由具备凭据和可确认大陆无代理环境继续执行。
