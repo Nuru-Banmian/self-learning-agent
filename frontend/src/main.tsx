@@ -35,7 +35,86 @@ type Run = {
   reply: string;
   todo_ids: string[];
   memory: MemoryEvidence;
+  research: ResearchEvidence;
 };
+type ResearchEvidence = {
+  status?: string;
+  task?: { query: string; read_body: boolean };
+  sources?: {
+    id: string;
+    title: string;
+    url: string;
+    snippet: string;
+    material_type: string;
+    body: string | null;
+    body_truncated?: boolean;
+  }[];
+  calls?: {
+    tool: string;
+    status: string;
+    elapsed_ms?: number;
+    http_status?: number;
+  }[];
+  gaps?: string[];
+};
+const researchStatuses: Record<string, string> = {
+  running: "进行中",
+  success: "成功",
+  empty: "无结果",
+  partial: "部分完成",
+  error: "失败",
+};
+
+function ResearchPanel({ research }: { research: ResearchEvidence | null }) {
+  if (!research?.status) return null;
+  return (
+    <section className="suggestions research" aria-label="外部资料与执行记录">
+      <h2>外部资料与执行记录</h2>
+      <p>执行 Agent · {researchStatuses[research.status] || research.status}</p>
+      <p>查询：{research.task?.query}</p>
+      <p className="list-note">
+        资料仅供参考；行动建议需要明确加入才会成为待办。
+      </p>
+      {research.gaps?.map((gap, i) => (
+        <p className="error" key={i}>
+          {gap}
+        </p>
+      ))}
+      {research.sources?.map((source) => (
+        <article className="suggestion" key={source.id}>
+          <a href={source.url} target="_blank" rel="noreferrer">
+            [{source.id}] {source.title}
+          </a>
+          <p>{source.snippet}</p>
+          <small>
+            {source.material_type === "body"
+              ? "已取得正文"
+              : "仅搜索摘要，未读取正文"}
+          </small>
+          {source.body && (
+            <details>
+              <summary>
+                查看已取得正文{source.body_truncated ? "（截取片段）" : ""}
+              </summary>
+              <p className="source-body">{source.body}</p>
+            </details>
+          )}
+        </article>
+      ))}
+      <details>
+        <summary>实际工具调用 · {research.calls?.length || 0} 次</summary>
+        {research.calls?.map((call, i) => (
+          <p key={i}>
+            {call.tool === "iqs_search" ? "IQS 搜索" : "IQS 正文读取"} ·{" "}
+            {researchStatuses[call.status] || call.status} ·{" "}
+            {call.elapsed_ms ?? "…"} ms
+            {call.http_status ? ` · HTTP ${call.http_status}` : ""}
+          </p>
+        ))}
+      </details>
+    </section>
+  );
+}
 const memoryCategories: Record<string, string> = {
   preference: "持续偏好",
   background: "背景",
@@ -407,6 +486,7 @@ function App() {
   const [pending, setPending] = useState<Pending | null>(null);
   const [memories, setMemories] = useState<Memory[]>([]);
   const [evidence, setEvidence] = useState<MemoryEvidence | null>(null);
+  const [research, setResearch] = useState<ResearchEvidence | null>(null);
   const stream = useRef<EventSource | null>(null);
 
   async function refresh(id: string) {
@@ -426,7 +506,11 @@ function App() {
     if (data.latest_run_id) {
       const latest = await api<Run>(`/runs/${data.latest_run_id}`);
       setEvidence(latest.memory);
-    } else setEvidence(null);
+      setResearch(latest.research);
+    } else {
+      setEvidence(null);
+      setResearch(null);
+    }
   }
 
   async function newSession() {
@@ -438,6 +522,7 @@ function App() {
     setPhase("准备就绪");
     setSavedCount(null);
     setEvidence(null);
+    setResearch(null);
     setMemories(await api<Memory[]>("/memories"));
     return created.id;
   }
@@ -468,7 +553,9 @@ function App() {
       setPhase(
         data.role === "learning"
           ? "学习 Agent 正在整理记忆"
-          : "主 Agent 正在处理",
+          : data.role === "execution"
+            ? "执行 Agent 正在查询资料"
+            : "主 Agent 正在处理",
       );
     });
     events.addEventListener("memory_saved", () => setPhase("记忆保存已提交"));
@@ -478,7 +565,19 @@ function App() {
     events.addEventListener("memory_deleted", () =>
       setPhase("记忆删除已提交，正在读回"),
     );
-    events.addEventListener("tool_call", () => setPhase("正在处理待办或计划"));
+    events.addEventListener("tool_call", (event) => {
+      const data = JSON.parse((event as MessageEvent).data);
+      setPhase(
+        data.role === "execution"
+          ? data.tool === "iqs_read_page"
+            ? "执行 Agent 正在读取正文"
+            : "执行 Agent 正在搜索"
+          : "正在处理待办或计划",
+      );
+    });
+    events.addEventListener("research", (event) =>
+      setResearch(JSON.parse((event as MessageEvent).data)),
+    );
     events.addEventListener("saved", () => setPhase("保存已提交，正在读回"));
     events.addEventListener("terminal", () => {
       void finish(operation.request_id, operation.session).catch(failed);
@@ -500,6 +599,7 @@ function App() {
     setError("");
     setSavedCount(null);
     setPending(operation);
+    setResearch(null);
     localStorage.setItem("assistant-pending", JSON.stringify(operation));
     try {
       const run = await api<Run>(`/sessions/${operation.session}/messages`, {
@@ -660,6 +760,7 @@ function App() {
               </button>
             </div>
           </form>
+          <ResearchPanel research={research} />
           <section className="suggestions" aria-label="行动建议">
             <div className="panel-head">
               <h2>当天计划与行动建议</h2>
@@ -671,7 +772,7 @@ function App() {
                 生成当天计划
               </button>
             </div>
-            <p className="list-note">建议需明确加入才会成为待办。</p>
+            <p className="list-note">可逐项选择加入；未选择的建议不会保存为待办。</p>
             {suggestions.map((idea) => (
               <article key={idea.id} className="suggestion">
                 <p>{idea.title}</p>

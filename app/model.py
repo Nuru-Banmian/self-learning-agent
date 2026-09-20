@@ -64,6 +64,21 @@ def function_tool(
 TOOLS = [
     CREATE_TOOL,
     function_tool(
+        "research_learning",
+        "学习安排需要外部资料时委派执行 Agent 搜索。"
+        "结合真实待办和生效记忆，明确主题和资料偏好；无须外部资料不用此工具。",
+        {
+            "query": {"type": "string", "maxLength": 1024},
+            "todo_ids": {"type": "array", "items": {"type": "string"}},
+            "memory_ids": {"type": "array", "items": {"type": "string"}},
+            "read_body": {
+                "type": "boolean",
+                "description": "确需正文中的详细示例时才读取正文",
+            },
+        },
+        ["query", "todo_ids", "memory_ids", "read_body"],
+    ),
+    function_tool(
         "update_todo",
         "修改一项待办，必须使用实际稳定ID。只提交用户要求修改的字段。",
         {
@@ -85,7 +100,8 @@ TOOLS = [
     function_tool("list_todos", "查询真实待办及状态，不修改。", {}, []),
     function_tool(
         "plan_day",
-        "根据真实待办生成基础当天计划。只返回可选行动建议，不声称建议已安排，不写待办。空清单不虚构安排。",
+        "无需外部资料时根据真实待办生成基础当天计划。"
+        "需要学习资料时用research_learning。只返回可选建议，不写待办。",
         {"suggestions": {"type": "array", "maxItems": 5, "items": {"type": "string"}}},
         ["suggestions"],
     ),
@@ -131,6 +147,8 @@ async def call_model(
     transport: httpx.AsyncBaseTransport | None,
     *,
     schema: dict[str, Any] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    required_tool: str | None = None,
 ) -> dict[str, Any]:
     key = settings.dashscope_api_key.get_secret_value()
     if not key:
@@ -168,7 +186,15 @@ async def call_model(
                                 }
                             }
                             if schema
-                            else {"tools": TOOLS, "tool_choice": "auto"}
+                            else {
+                                "tools": tools if tools is not None else TOOLS,
+                                "tool_choice": {
+                                    "type": "function",
+                                    "function": {"name": required_tool},
+                                }
+                                if required_tool
+                                else "auto",
+                            }
                         ),
                         "max_tokens": 1800,
                     },

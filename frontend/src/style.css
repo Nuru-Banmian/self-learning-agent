@@ -443,3 +443,24 @@ footer {
     grid-template-columns: 1fr;
   }
 }
+.research {
+  padding: 24px;
+}
+.research .suggestion {
+  padding: 12px 0;
+}
+.research .list-note {
+  padding: 0;
+}
+.research p {
+  overflow-wrap: anywhere;
+}
+.research a {
+  color: #316c55;
+}
+.source-body {
+  white-space: pre-wrap;
+  max-height: 20rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}

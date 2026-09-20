@@ -67,6 +67,10 @@ class Store:
                 db.execute(
                     "ALTER TABLE runs ADD COLUMN memory TEXT NOT NULL DEFAULT '{}'"
                 )
+            if "research" not in columns:
+                db.execute(
+                    "ALTER TABLE runs ADD COLUMN research TEXT NOT NULL DEFAULT '{}'"
+                )
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -114,7 +118,16 @@ class Store:
                 "todo_ids": json.loads(row["todo_ids"]),
                 "action": json.loads(row["action"]) if row["action"] else None,
                 "memory": json.loads(row["memory"]),
+                "research": json.loads(row["research"]),
             }
+
+    def research_record(self, run_id: str, record: dict[str, Any]) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE runs SET research=? WHERE id=?",
+                (json.dumps(record, ensure_ascii=False), run_id),
+            )
+            self._event(db, run_id, "research", record)
 
     def memories(self) -> list[dict[str, Any]]:
         with self.connect() as db:
@@ -499,8 +512,9 @@ class Store:
                     run_id,
                     "tool_result",
                     {
-                        "tool": "plan_day",
-                        "status": "success",
+                        "tool": tool,
+                        "role": "main",
+                        "status": "success" if status == "completed" else "partial",
                         "suggestions": suggestions,
                     },
                 )
@@ -517,6 +531,28 @@ class Store:
                 )
                 self._event(db, run_id, "saved", {"todo_ids": ids})
             memory = json.loads(run["memory"])
+            research = json.loads(run["research"])
+            if research and status == "failed":
+                research["status"] = "partial" if research["sources"] else "error"
+                research["gaps"].append("本轮已中断或失败，查询与学习安排未完成。")
+                for call in research["calls"]:
+                    if call["status"] == "running":
+                        call.update(status="error", error="interrupted")
+                        self._event(
+                            db, run_id, "tool_result", {"role": "execution", **call}
+                        )
+                db.execute(
+                    "UPDATE runs SET research=? WHERE id=?",
+                    (json.dumps(research, ensure_ascii=False), run_id),
+                )
+                self._event(db, run_id, "research", research)
+                if research["sources"]:
+                    status = "partial"
+                    reply += "\n\n已取得的外部资料保留：\n" + "\n".join(
+                        f"[{s['id']}] {s['title']} ({s['material_type']})\n"
+                        f"{s['url']}\n{s['snippet']}"
+                        for s in research["sources"]
+                    )
             if status == "failed" and memory.get("saved_ids"):
                 status = "partial"
                 reply += "\n\n记忆已提交保存，但本轮其他处理未完成。"

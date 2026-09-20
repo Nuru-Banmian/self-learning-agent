@@ -6,7 +6,7 @@
 - 执行 Agent：查询资料、地点和天气。
 - 学习 Agent：从日常对话整理用户记忆，在后续任务中使用。
 
-已实现 Issue #2、#3、#4、#5：聊天创建、查询、修改和完成待办，按实际待办生成基础当天计划，明确接受后将行动建议加入待办；包含 SQLite 持久化、工作台及 HTTP/SSE。普通聊天可形成有来源的用户记忆，在新会话普通问答中使用。支持聊天纠正及面板编辑、删除记忆；搜索与天气属于后续切片。首版面向本机单人使用。
+已实现 Issue #2、#3、#4、#5、#6 的本地功能：聊天创建、查询、修改和完成待办，按实际待办生成基础当天计划，明确接受后将行动建议加入待办；包含 SQLite 持久化、工作台及 HTTP/SSE。普通聊天可形成有来源的用户记忆，在新会话普通问答中使用。支持聊天纠正及面板编辑、删除记忆；可按需搜索学习资料并生成有来源的步骤与可选练习；真实 IQS 验收尚待独立凭据，天气属于后续切片。首版面向本机单人使用。
 
 ## 本地启动（Windows PowerShell）
 
@@ -55,6 +55,16 @@ cd ..
 - 页面和运行记录分开显示已保存、此次加载及主 Agent 的采用说明；采用说明不代表效果已验证。模型文字不作为保存回执。只有数据库提交后才出现 `memory_saved`。
 - 学习在本轮终态前完成；回答可用但学习失败时为 `partial`（部分完成）。没有新增信息为正常完成。记忆已提交但回答失败也保留已保存结果并报部分完成。总模型调用预算包含学习、主 Agent 及重试，并为主 Agent 保留一次调用。
 
+## 学习资料与执行 Agent
+
+- 例如“查找 Python 生成器的官方资料，并给一个练习”。主 Agent 结合真实待办、相关生效记忆提出查询；执行 Agent 是受限的确定性工具执行器，只能调用 IQS 搜索和读取返回资料的正文。主 Agent 再组织有来源的步骤，不是另一个拥有写入权限的模型。
+- “今天我该干什么？”会结合当天学习待办检索资料偏好。明确“搜索/查找学习资料”的指令限定为研究工具，查询内容仍由主 Agent 组织；费用/方法咨询保留普通问答。仅查询待办或不需要外部资料时不强制搜索；网页数据不进入学习 Agent。默认生成 3–5 个可选学习任务，可逐项选择加入；明确数量优先于默认。建议通过既有接受建议路径加入，同一建议只能写入一次。支持“给我两个任务”“给我两个学习任务”“给我两个可选学习任务”等数量表达；只保存逐项选中的任务，未选项仍为建议。
+- 后端 `.env` 单独填写 `IQS_API_KEY`，不会复用百炼密钥。`IQS_ENGINE=Generic`；`IQS_ENHANCED_SUMMARY=false` 默认关闭收费增强摘要。引擎/增强功能的费用与权限以 IQS 账户为准。
+- `SEARCH_TIMEOUT_SECONDS=12` 限制每次实际请求，`MAX_SEARCH_CALLS=4` 包含搜索、正文读取和所有重试，`SEARCH_RETRIES=1`。仅网络、超时、429 和临时 5xx 可重试；鉴权/结构错误不重试。`RUN_TIMEOUT_SECONDS` 仍限制整轮，建议 `MAX_MODEL_CALLS=3` 以容纳学习、主 Agent 委派与最终组织。旧 `.env` 的显式配置不会自动覆盖。
+- 每轮最多保存前 5 条资料、按需读取其中前 2 条正文。响应最多 512 KB，标题/摘要/正文分别最多 500/4000/10000 字符；正文截断标识可见。页面区分搜索摘要和实际取得的正文片段，不把摘要声称为已读全文。
+- 页面及持久执行记录保留查询、输入摘要、角色、每次工具请求、状态、耗时及实际来源。结果区分 success/empty/partial/error；搜索无结果或失败不编造来源，正文或最终组织失败仍保留已有资料和待办。引用只能使用本轮实际来源标识，执行阶段不接受模型写入工具。
+- 供应商客户端禁用环境代理。搜索 API 可达与本机打开结果网站可达须分别验证；本机大陆出口尚未证明，不能将禁用代理等同于大陆验收通过。
+
 ## 公开接口
 
 完整 Schema：运行后的 `/docs`。
@@ -65,7 +75,7 @@ cd ..
 | `GET /api/sessions/{id}` | 读取会话及消息 |
 | `POST /api/sessions/{id}/messages` | 提交 `{request_id, content, action?}`，返回 202 和执行状态；action 是用户明确选择的面板操作 |
 | `GET /api/sessions/{id}/suggestions` | 当前会话的行动建议、来源执行标识、计划日期及转成的待办 ID |
-| `GET /api/runs/{request_id}` | 读取执行状态、实际写入 ID、回复、调用计数及 memory 学习/加载/采用证据 |
+| `GET /api/runs/{request_id}` | 读取执行状态、实际写入 ID、回复、调用计数及 memory 学习/加载/采用、research 查询/资料/调用证据 |
 | `GET /api/runs/{request_id}/events` | SSE：角色、工具调用/结果、保存、回复与终态，支持 `Last-Event-ID` |
 | `GET /api/memories` | 读取记忆、来源、范围、期限及当前是否生效，无模型也可查看 |
 | `GET /api/todos` | 读取稳定 ID、标题、日期、状态、时间戳和来源 |
@@ -94,9 +104,10 @@ npm run build
 .\.venv\Scripts\python -m tests.live_maintenance
 .\.venv\Scripts\python -m tests.live_memory
 .\.venv\Scripts\python -m tests.live_memory_maintenance
+.\.venv\Scripts\python -m tests.live_research
 ```
 
-测试通过公开 HTTP/SSE 使用真实 SQLite，只模拟外部模型或时钟，存储失败通过 SQLite 触发器注入。重启测试实际启动、终止并重新启动 Uvicorn 进程，且重启后移除模型凭据验证读取及建议防重复。验收证据与未验证项见 [Issue #2](docs/acceptance/issue-2.md) 、[Issue #3](docs/acceptance/issue-3.md) 、[Issue #4](docs/acceptance/issue-4.md) 和 [Issue #5 验收记录](docs/acceptance/issue-5.md)。
+测试通过公开 HTTP/SSE 使用真实 SQLite，只模拟外部模型或时钟，存储失败通过 SQLite 触发器注入。重启测试实际启动、终止并重新启动 Uvicorn 进程，且重启后移除模型凭据验证读取及建议防重复。验收证据与未验证项见 [Issue #2](docs/acceptance/issue-2.md) 、[Issue #3](docs/acceptance/issue-3.md) 、[Issue #4](docs/acceptance/issue-4.md) 、[Issue #5](docs/acceptance/issue-5.md) 和 [Issue #6 验收记录](docs/acceptance/issue-6.md)。
 
 ## 项目文档
 
