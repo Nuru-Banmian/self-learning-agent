@@ -64,6 +64,29 @@ def function_tool(
 TOOLS = [
     CREATE_TOOL,
     function_tool(
+        "prepare_outing",
+        "用户查询天气或外出安排需要天气时委派执行 Agent。"
+        "地点和原文日期仅取自当前明确询问或真实待办，缺失用null；"
+        "不得用记忆推断所在地。",
+        {
+            "destination": {
+                "type": ["string", "null"],
+                "description": "当前询问或待办标题里的地点原文；"
+                "消歧后可用用户明确给出的地点ID",
+            },
+            "date_text": {
+                "type": ["string", "null"],
+                "description": "当前询问中的日期原文；使用待办安排日期时为null。"
+                "相对日期由应用按目的地时区解析",
+            },
+            "todo_id": {
+                "type": ["string", "null"],
+                "description": "真实外出待办ID；直接询问时为null",
+            },
+        },
+        ["destination", "date_text", "todo_id"],
+    ),
+    function_tool(
         "research_learning",
         "学习安排需要外部资料时委派执行 Agent 搜索。"
         "结合真实待办和生效记忆，明确主题和资料偏好；无须外部资料不用此工具。",

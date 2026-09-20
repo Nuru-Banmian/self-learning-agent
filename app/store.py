@@ -71,6 +71,10 @@ class Store:
                 db.execute(
                     "ALTER TABLE runs ADD COLUMN research TEXT NOT NULL DEFAULT '{}'"
                 )
+            if "weather" not in columns:
+                db.execute(
+                    "ALTER TABLE runs ADD COLUMN weather TEXT NOT NULL DEFAULT '{}'"
+                )
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -119,7 +123,16 @@ class Store:
                 "action": json.loads(row["action"]) if row["action"] else None,
                 "memory": json.loads(row["memory"]),
                 "research": json.loads(row["research"]),
+                "weather": json.loads(row["weather"]),
             }
+
+    def weather_record(self, run_id: str, record: dict[str, Any]) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE runs SET weather=? WHERE id=?",
+                (json.dumps(record, ensure_ascii=False), run_id),
+            )
+            self._event(db, run_id, "weather", record)
 
     def research_record(self, run_id: str, record: dict[str, Any]) -> None:
         with self.connect() as db:
@@ -531,6 +544,32 @@ class Store:
                 )
                 self._event(db, run_id, "saved", {"todo_ids": ids})
             memory = json.loads(run["memory"])
+            weather = json.loads(run["weather"])
+            if weather and weather["status"] == "running":
+                weather["status"] = "partial" if weather["location"] else "error"
+                weather["gaps"].append(
+                    "本轮已中断或失败，天气准备未完成；已有信息保留。"
+                )
+                for call in weather["calls"]:
+                    if call["status"] == "running":
+                        call.update(status="error", error="interrupted")
+                        self._event(
+                            db, run_id, "tool_result", {"role": "execution", **call}
+                        )
+                db.execute(
+                    "UPDATE runs SET weather=? WHERE id=?",
+                    (json.dumps(weather, ensure_ascii=False), run_id),
+                )
+                self._event(db, run_id, "weather", weather)
+                self._event(
+                    db,
+                    run_id,
+                    "role",
+                    {"role": "execution", "status": weather["status"]},
+                )
+                if weather["location"]:
+                    status = "partial"
+                    reply += "\n已确认的目的地信息保留在天气面板中。"
             research = json.loads(run["research"])
             if research and status == "failed":
                 research["status"] = "partial" if research["sources"] else "error"
