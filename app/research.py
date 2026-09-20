@@ -42,16 +42,18 @@ class ResearchAnswer(BaseModel):
 
 def explicit_search(content: str) -> bool:
     # Honor a direct read request without offering unrelated write tools.
-    return bool(
-        re.search(
-            r"(?:^|[。！？?；;，,])\s*(?:请|帮我|请帮我)?"
-            r"(?:结合[^，。！？?]{1,20})?(?:搜索|查找).*"
-            r"(?:资料|文档|教程|示例|学习)",
-            content,
-        )
-    ) and not re.search(
+    if re.search(
         r"不要|不用|不需要|不必|无需|别|解释|什么意思|这句话|记录|加入待办|修改|完成|[‘’“”\"']",
         content,
+    ):
+        return False
+    return any(
+        re.match(r"^\s*(?:请|帮我|请帮我)?(?:结合.{1,20})?(?:搜索|查找)", clause)
+        and re.search(r"资料|文档|教程|示例|学习", clause)
+        and not re.search(
+            r"是什么|怎么|如何|怎样|能否|是否|收费|费用|方法|吗|呢", clause
+        )
+        for clause in re.split(r"[。！？?；;，,\n]", content)
     )
 
 

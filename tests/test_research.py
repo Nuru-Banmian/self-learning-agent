@@ -77,6 +77,18 @@ def research_client(
             )
         elif body["messages"][-1]["content"] == "查询我的待办":
             result = operation_response("list_todos", {})
+        elif (
+            body["messages"][-1]["content"]
+            in (
+                "搜索学习资料需要收费吗？",
+                "查找 Python 官方资料的方法是什么？",
+                "不要搜索，解释生成器",
+            )
+            and body["tool_choice"] == "auto"
+        ):
+            result = operation_response(
+                "answer_question", {"reply": "可以说明使用方式。", "memory_usage": []}
+            )
         elif body["messages"][-1]["content"] == "请记录今天学习 Python 生成器":
             result = operation_response(
                 "create_todos",
@@ -406,3 +418,23 @@ def test_explicit_search_cannot_be_routed_to_a_write_tool(tmp_path, content):
         assert [t["function"]["name"] for t in main["tools"]] == ["research_learning"]
         assert run["status"] == "completed"
         assert c.get("/api/todos").json() == []
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "搜索学习资料需要收费吗？",
+        "查找 Python 官方资料的方法是什么？",
+        "不要搜索，解释生成器",
+    ],
+)
+def test_questions_about_search_and_opt_out_do_not_force_external_calls(
+    tmp_path, content
+):
+    requests = []
+    with research_client(tmp_path, requests) as c:
+        run, _ = submit(c, content)
+        assert requests[0][1]["tool_choice"] == "auto"
+        assert run["status"] == "completed"
+        assert run["research"] == {}
+        assert not any(r[0].url.host == "cloud-iqs.aliyuncs.com" for r in requests)
