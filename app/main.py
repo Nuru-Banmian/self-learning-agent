@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.evidence import Checkpoint
 from app.memory import active
 from app.runtime import execute
 from app.settings import Settings
@@ -146,6 +147,14 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache"},
         )
+
+    @app.post("/api/runs/{run_id}/checkpoints", status_code=201)
+    def checkpoint(run_id: str, check: Checkpoint) -> dict[str, Any]:
+        get_run(run_id)
+        try:
+            return store.add_checkpoint(run_id, check.model_dump(), now().isoformat())
+        except Conflict as exc:
+            raise HTTPException(409, str(exc)) from None
 
     @app.post("/api/runs/{run_id}/retry", status_code=202)
     async def retry(run_id: str) -> dict[str, Any]:

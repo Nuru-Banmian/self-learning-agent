@@ -59,8 +59,17 @@ class Store:
                 CREATE TABLE IF NOT EXISTS memory_sources (
                     message_id TEXT PRIMARY KEY REFERENCES messages);
                 INSERT OR IGNORE INTO memory_sources SELECT message_id FROM memories;
+                CREATE TABLE IF NOT EXISTS checkpoints (
+                    id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs,
+                    criterion TEXT NOT NULL, observation TEXT NOT NULL,
+                    status TEXT NOT NULL, baseline_run_id TEXT REFERENCES runs,
+                    created_at TEXT NOT NULL);
             """)
             columns = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
+            if "execution" not in columns:
+                db.execute(
+                    "ALTER TABLE runs ADD COLUMN execution TEXT NOT NULL DEFAULT '{}'"
+                )
             if "action" not in columns:
                 db.execute("ALTER TABLE runs ADD COLUMN action TEXT")
             if "memory" not in columns:
@@ -153,6 +162,14 @@ class Store:
                 "todo_ids": json.loads(row["todo_ids"]),
                 "action": json.loads(row["action"]) if row["action"] else None,
                 "memory": json.loads(row["memory"]),
+                "execution": json.loads(row["execution"]),
+                "checkpoints": [
+                    dict(c) | {"reviewer": "user"}
+                    for c in db.execute(
+                        "SELECT * FROM checkpoints WHERE run_id=? ORDER BY rowid",
+                        (run_id,),
+                    )
+                ],
                 "research": json.loads(row["research"]),
                 "weather": json.loads(row["weather"]),
                 "retryable": self._retryable(row),
@@ -183,6 +200,53 @@ class Store:
                     )
                 ],
             }
+
+    def add_checkpoint(
+        self, run_id: str, check: dict[str, Any], now: str
+    ) -> dict[str, Any]:
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM checkpoints WHERE id=?", (check["id"],)
+            ).fetchone()
+            if existing:
+                if existing["run_id"] != run_id or any(
+                    existing[k] != v for k, v in check.items()
+                ):
+                    raise Conflict("检查点标识已用于其他内容，请保留原记录。")
+                return dict(existing) | {"reviewer": "user"}
+            run = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+            if run["status"] in ("running", "queued"):
+                raise Conflict("请在本轮结束后核验检查点。")
+            if check["baseline_run_id"]:
+                baseline = db.execute(
+                    "SELECT * FROM runs WHERE id=?", (check["baseline_run_id"],)
+                ).fetchone()
+                model = json.loads(run["execution"]).get("model")
+                if (
+                    baseline is None
+                    or baseline["id"] == run_id
+                    or baseline["status"] in ("running", "queued")
+                    or not model
+                    or model != json.loads(baseline["execution"]).get("model")
+                    or not run["model_calls"]
+                    or not baseline["model_calls"]
+                ):
+                    raise Conflict("对比须选另一条已结束、同模型且有模型调用的记录。")
+            record = check | {"run_id": run_id, "created_at": now}
+            db.execute(
+                "INSERT INTO checkpoints VALUES "
+                "(:id,:run_id,:criterion,:observation,:status,:baseline_run_id,:created_at)",
+                record,
+            )
+            return record | {"reviewer": "user"}
+
+    def execution_record(self, run_id: str, record: dict[str, Any]) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE runs SET execution=? WHERE id=?",
+                (json.dumps(record, ensure_ascii=False), run_id),
+            )
 
     def weather_record(self, run_id: str, record: dict[str, Any]) -> None:
         with self.connect() as db:
@@ -328,6 +392,21 @@ class Store:
             record = json.loads(run["memory"]) | {
                 "learning": "saved" if saved else "empty",
                 "saved_ids": saved,
+                "saved": [
+                    dict(
+                        db.execute(
+                            "SELECT * FROM memories WHERE id=?", (mid,)
+                        ).fetchone()
+                    )
+                    | {
+                        "source": {
+                            "message_id": run["message_id"],
+                            "session_id": run["session_id"],
+                            "content": run["content"],
+                        }
+                    }
+                    for mid in saved
+                ],
                 "rejected": rejected,
                 "conflict_ids": conflicts,
                 "effect_verified": False,
