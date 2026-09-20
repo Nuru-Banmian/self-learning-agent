@@ -8,6 +8,7 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.memory_policy import category_of, general_time_condition, source_clauses
 from app.model import call_model
 from app.settings import Settings
 from app.store import Store
@@ -39,39 +40,6 @@ class Answer(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     reply: str = Field(min_length=1, max_length=6000)
     memory_usage: list[Usage] = Field(max_length=6)
-
-
-def source_clauses(content: str) -> list[str]:
-    # Conservative supported assertions, never quotations, hypotheticals or tasks.
-    if re.search(
-        r'[“”「」"：:？?]|假如|如果|可能|也许|据说|他说|她说|网页|文章|助理|示例|翻译|解释这',
-        content,
-    ):
-        return []
-    return [p.strip() for p in re.split(r"[，,。；;\n！？!?]", content) if p.strip()]
-
-
-def category_of(clause: str) -> str | None:
-    if re.search(
-        r"这周|本周|下周|这月|本月|今年|最近|暂时|这几天|\d+月|\d+号|\d{4}-", clause
-    ):
-        return None
-    if re.search(r"吗|是否|是不是|请记录|我要|打算|准备|帮我|提醒我", clause):
-        return None
-    if re.search(r"今天|明天|这次|本次|这项|这件", clause):
-        return (
-            "condition"
-            if re.search(r"只有|只能|仅有|限于|用|需要|优先|喜欢", clause)
-            else None
-        )
-    if re.match(
-        r"(?:我|以后)(?:更|通常|一般|一直|比较)?(?:喜欢|偏好|习惯|优先|不喜欢|不爱|倾向)",
-        clause,
-    ):
-        return "preference"
-    if re.match(r"我(?:是|住在|居住在|正在学习|在学|目前在学|从事|工作是)", clause):
-        return "background"
-    return None
 
 
 def active(memory: dict[str, Any], now: datetime, todos: list[dict[str, Any]]) -> bool:
@@ -211,6 +179,13 @@ async def learn(
         ):
             rejected += 1
             continue
+        if any(
+            re.fullmatch(r"(?:仅限|仅在|只限于|只在)?(?:今天|明天|这次|本次)", c)
+            for c in clauses
+            if c != candidate.content
+        ):
+            rejected += 1
+            continue
         start = local
         end = None
         if category == "condition":
@@ -223,7 +198,11 @@ async def learn(
                 ):
                     rejected += 1
                     continue
-            elif targets or candidate.task_id:
+            elif (
+                targets
+                or candidate.task_id
+                or not general_time_condition(candidate.content)
+            ):
                 rejected += 1
                 continue
             if "今天" in candidate.content or "明天" in candidate.content:

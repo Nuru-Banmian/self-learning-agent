@@ -304,3 +304,39 @@ def test_empty_extraction_is_success_and_malformed_extraction_is_partial(tmp_pat
         assert run["status"] == "partial"
         assert run["memory"]["learning"] == "failed"
         assert c.get("/api/memories").json() == []
+
+
+def test_adjacent_clause_time_limit_cannot_be_dropped(tmp_path):
+    with memory_client(
+        tmp_path, extract=lambda s: [candidate(s, content="我喜欢视频资料")]
+    ) as c:
+        submit(c, "仅限今天，我喜欢视频资料")
+        assert c.get("/api/memories").json() == []
+
+
+def test_unregistered_task_condition_does_not_become_general_condition(tmp_path):
+    with memory_client(
+        tmp_path,
+        extract=lambda s: [
+            candidate(s, category="condition", topic="半小时", validity="today")
+        ],
+    ) as c:
+        submit(c, "今天学习 Python只有半小时")
+        assert c.get("/api/memories").json() == []
+        run, _ = submit(c, "今天去医院怎么安排？", "unrelated")
+        assert run["memory"]["loaded"] == []
+
+
+def test_residence_conflict_is_detected_despite_different_topic_values(tmp_path):
+    with memory_client(
+        tmp_path,
+        extract=lambda s: [
+            candidate(s, category="background", topic=s["content"][-2:])
+        ],
+    ) as c:
+        submit(c, "我住在北京")
+        run, _ = submit(c, "我住在上海", "new-residence")
+        assert run["memory"]["conflict_ids"]
+        assert not any(m["active"] for m in c.get("/api/memories").json())
+        later, _ = submit(c, "北京和上海出行怎么安排？", "travel")
+        assert later["memory"]["loaded"] == []

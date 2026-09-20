@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app.memory_policy import fact_attribute
 from app.todos import Clarification
 
 
@@ -178,7 +179,15 @@ class Store:
                 overlap = [
                     p
                     for p in previous
-                    if (p["topic"] in c["content"] or c["topic"] in p["content"])
+                    if (
+                        p["topic"] in c["content"]
+                        or c["topic"] in p["content"]
+                        or (
+                            fact_attribute(c["content"]) is not None
+                            and fact_attribute(c["content"])
+                            == fact_attribute(p["content"])
+                        )
+                    )
                 ]
                 state = "conflict" if overlap else "active"
                 for p in overlap:
