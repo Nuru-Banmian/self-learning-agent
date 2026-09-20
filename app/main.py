@@ -38,6 +38,25 @@ def create_app(
     store = Store(config.db_path)
     tasks: set[asyncio.Task[None]] = set()
 
+    async def drain(session_id: str, run_id: str) -> None:
+        current: str | None = run_id
+        while current is not None:
+            try:
+                await execute(store, config, current, transport)
+            except Exception:
+                # A new role/adapter must not strand its run or expose raw errors.
+                store.finish(
+                    current, "failed", "处理失败，已提交结果保留。", error="internal"
+                )
+            current = store.start_next(session_id)
+
+    def schedule(session_id: str) -> None:
+        run_id = store.start_next(session_id)
+        if run_id:
+            task = asyncio.create_task(drain(session_id, run_id))
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store.interrupt_unfinished()
@@ -82,11 +101,7 @@ def create_app(
         except Conflict as exc:
             raise HTTPException(409, str(exc)) from None
         if fresh:
-            task = asyncio.create_task(
-                execute(store, config, message.request_id, transport)
-            )
-            tasks.add(task)
-            task.add_done_callback(tasks.discard)
+            schedule(session_id)
         return get_run(message.request_id)
 
     @app.get("/api/sessions/{session_id}/suggestions")
@@ -118,7 +133,7 @@ def create_app(
                     yield f"id: {cursor}\nevent: {event['kind']}\ndata: {data}\n\n"
                     if event["kind"] == "terminal":
                         return
-                if get_run(run_id)["status"] != "running":
+                if get_run(run_id)["status"] not in ("running", "queued"):
                     # Re-read after terminal commits to avoid missing the final batch.
                     if not store.events(run_id, cursor):
                         return
@@ -131,6 +146,16 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache"},
         )
+
+    @app.post("/api/runs/{run_id}/retry", status_code=202)
+    async def retry(run_id: str) -> dict[str, Any]:
+        original = get_run(run_id)
+        try:
+            child_id = store.retry(run_id)
+        except Conflict as exc:
+            raise HTTPException(409, str(exc)) from None
+        schedule(original["session_id"])
+        return get_run(child_id)
 
     @app.get("/api/todos")
     def todos() -> list[dict[str, Any]]:

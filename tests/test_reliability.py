@@ -89,7 +89,8 @@ def test_total_deadline_and_session_serialization(tmp_path):
         body = {"request_id": "slow", "content": CONTENT}
         assert c.post(url, json=body).status_code == 202
         assert c.post(url, json=body).status_code == 202
-        assert c.post(url, json=body | {"request_id": "concurrent"}).status_code == 409
+        queued = c.post(url, json=body | {"request_id": "concurrent"})
+        assert queued.status_code == 202 and queued.json()["status"] == "queued"
         c.get("/api/runs/slow/events")
         run = c.get("/api/runs/slow").json()
         assert run["status"] == "failed" and run["error"] == "timeout"
