@@ -1,0 +1,18 @@
+# Local credentials and runtime data
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+*.db-*
+*.sqlite-*
+*.sqlite3-*
+
+# Local dependencies and caches
+.venv/
+node_modules/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+dist/
