@@ -78,7 +78,14 @@ def select_memories(store: Store, query: str, now: datetime) -> list[dict[str, A
     for memory in sorted(memories, key=lambda m: m["scope"] == "task", reverse=True):
         if not active(memory, now, todos):
             continue
-        if memory["category"] == "preference" and re.search(r"这次|本次", query):
+        # Explicit current source constraints take priority even without “本次”.
+        # Omit general preferences from this request, never rewrite persistence.
+        if memory["category"] == "preference" and re.search(
+            r"这次|本次|(?:只|仅)(?:找|查|看|用|读|搜|要)|"
+            r"(?:不要|不用|别|无需|优先|侧重|改用)[^，。！？]*"
+            r"(?:资料|文档|教程|视频)",
+            query,
+        ):
             continue
         if memory["category"] == "preference" and any(
             same_subject(m, memory) for m in task_exceptions

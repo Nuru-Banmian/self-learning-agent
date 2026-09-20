@@ -62,6 +62,30 @@ def test_actual_search_carries_corrected_preference_even_if_model_omits_it(tmp_p
         assert run["research"]["task"]["query"] == searches[-1]["query"]
 
 
+def test_current_source_request_overrides_preference_without_rewriting_it(tmp_path):
+    from tests.test_research import research_client
+
+    requests = []
+    with research_client(
+        tmp_path, requests, search_query="Python 生成器 只找视频教程 不要官方文档"
+    ) as c:
+        submit(c, "我喜欢优先阅读官方资料", "learn")
+        saved = c.get("/api/memories").json()
+        run, _ = submit(
+            c, "请查找 Python 生成器学习资料，只找视频教程，不要官方文档", "exception"
+        )
+        searches = [
+            body for request, body in requests if request.url.path == "/search/unified"
+        ]
+        assert searches[-1]["query"] == "Python 生成器 只找视频教程 不要官方文档"
+        assert run["memory"]["loaded"] == []
+        assert c.get("/api/memories").json() == saved
+    with research_client(tmp_path, requests) as c:
+        later, _ = submit(c, "请查找 Python 装饰器学习资料", "ordinary")
+        assert later["memory"]["loaded"][0]["id"] == saved[0]["id"]
+        assert "我喜欢优先阅读官方资料" in later["research"]["task"]["query"]
+
+
 def test_ordinary_preference_and_independent_learning_task_both_commit(tmp_path):
     import json
 

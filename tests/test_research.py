@@ -22,6 +22,7 @@ def research_client(
     read_body=False,
     page=None,
     final=None,
+    search_query="Python 生成器 官方文档 yield",
     **settings,
 ):
     async def provider(request):
@@ -125,7 +126,7 @@ def research_client(
             result = operation_response(
                 "research_learning",
                 {
-                    "query": "Python 生成器 官方文档 yield",
+                    "query": search_query,
                     "todo_ids": [],
                     "memory_ids": [],
                     "read_body": read_body,
