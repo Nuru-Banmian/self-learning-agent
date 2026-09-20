@@ -83,7 +83,7 @@ async def call_model(
                 if not isinstance(result, dict):
                     raise TypeError("invalid message")
                 return result
-            except (httpx.TimeoutException, httpx.NetworkError):
+            except httpx.RequestError:
                 pass
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code not in (429, 500, 502, 503, 504):

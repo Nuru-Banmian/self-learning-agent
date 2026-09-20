@@ -24,7 +24,9 @@ DATE_TOKEN = re.compile(
     r"大后天|今天|明天|后天|昨天|前天|\d{4}-\d{1,2}-\d{1,2}|"
     r"(?:\d{4}年)?\d{1,2}月\d{1,2}[日号]|"
     r"过几天|这几天|改天|最近|稍后|以后|下次|周[一二三四五六日天末]|"
-    r"星期|下[周个月年]|月底|月初|节后|假期|\d+天后"
+    r"星期|下[周个月年]|月底|月初|节后|假期|\d+天后|"
+    r"明年|今年|后年|明早|明晚|今晚|早上|上午|下午|晚上|"
+    r"春节|元旦|国庆|中秋|端午|清明|劳动节|周末|农历|阴历"
 )
 
 
@@ -51,13 +53,14 @@ def prepare_todos(arguments: str, content: str, today: date) -> list[dict[str, A
     # A tool call is a proposal, never proof of write authorization.
     denied = re.search(
         r"[?？]|吗|是否|建议|如果|假如|例如|比如|解释|翻译|示例|"
+        r"应该|如何|怎么|能否|举例|要不要|会不会|"
         r"不要|不用|别|无需|不想|不打算|取消|[“”\"「」]",
         content,
     )
     permitted = re.match(
         r"^(?:请|麻烦)?(?:帮我|给我)?(?:记录|记下|记一下|添加|新增|加入|安排)|"
         r"^(?:(?:今天|明天|后天)\s*)?我(?:要|准备|打算)|"
-        r"^(?:今天|明天|后天)(?![的是])",
+        r"^我(?:今天|明天|后天)(?:要|准备|打算)",
         content,
     )
     if denied or not permitted:
@@ -72,6 +75,19 @@ def prepare_todos(arguments: str, content: str, today: date) -> list[dict[str, A
     # Reject unresolvable dates even when the model silently drops their evidence.
     for token in source_dates:
         date_from_text(token, today)
+    # Missing date evidence must not silently turn unfamiliar time phrases into
+    # "unscheduled". Unconsumed text is also a sign the proposal omitted an item.
+    residue = content[permitted.end() :]
+    for item in proposal.items:
+        residue = residue.replace(item.title, "")
+    residue = DATE_TOKEN.sub("", residue)
+    residue = re.sub(
+        r"以及|并且|然后|还要|还有|和|及|再|并|也|[\s，,。；;、：:！!]", "", residue
+    )
+    if residue:
+        raise Clarification(
+            "请明确完整的待办及日期，当前仍有未能可靠解释的内容，尚未保存。"
+        )
     prepared = []
     for item in proposal.items:
         if item.title not in content:
@@ -79,8 +95,25 @@ def prepare_todos(arguments: str, content: str, today: date) -> list[dict[str, A
                 "请明确待办的原始内容，本次操作无法对应来源，尚未保存。"
             )
         position = content.index(item.title)
+        clause_start = (
+            max(content.rfind(mark, 0, position) for mark in "，,。；;\n") + 1
+        )
+        clause_end = min(
+            (p for mark in "，,。；;\n" if (p := content.find(mark, position)) >= 0),
+            default=len(content),
+        )
+        clause_dates = DATE_TOKEN.findall(content[clause_start:clause_end])
+        if len(set(clause_dates)) > 1:
+            raise Clarification(
+                "请用逗号分开不同日期的事项，并分别写明日期，本次尚未保存。"
+            )
         preceding = list(DATE_TOKEN.finditer(content[:position]))
-        if preceding and item.date_text != preceding[-1].group():
+        expected = (
+            clause_dates[0]
+            if len(clause_dates) == 1
+            else (preceding[-1].group() if preceding else None)
+        )
+        if expected and item.date_text != expected:
             raise Clarification(
                 "请分别确认事项对应的日期，本次日期归属不一致，尚未保存。"
             )

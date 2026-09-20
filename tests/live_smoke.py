@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -11,6 +12,7 @@ from app.settings import Settings
 
 
 def main():
+    started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="assistant-live-") as directory:
         settings = Settings(db_path=Path(directory) / "live.sqlite3")
         if not settings.dashscope_api_key.get_secret_value():
@@ -35,6 +37,7 @@ def main():
                         "proxy": "disabled",
                         "status": run["status"],
                         "model_calls": run["model_calls"],
+                        "elapsed_seconds": round(time.monotonic() - started, 3),
                         "reply": run["reply"],
                         "todos": todos,
                     },

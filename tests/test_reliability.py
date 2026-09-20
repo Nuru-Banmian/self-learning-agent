@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+import time
 
 import httpx
 from fastapi.testclient import TestClient
@@ -103,3 +104,31 @@ def test_plain_model_claim_is_not_a_save_receipt(tmp_path):
         assert "已经保存" not in run["reply"]
         assert "未新增" in run["reply"]
         assert "event: saved" not in events
+
+
+def test_protocol_disconnect_terminates_run_and_releases_session(tmp_path):
+    def provider(request):
+        raise httpx.RemoteProtocolError("provider disconnected test-secret")
+
+    settings = Settings(
+        _env_file=None,
+        db_path=tmp_path / "test.db",
+        dashscope_api_key="test-secret",
+        model_retries=0,
+    )
+    with TestClient(create_app(settings, transport=httpx.MockTransport(provider))) as c:
+        session = c.post("/api/sessions").json()["id"]
+        url = f"/api/sessions/{session}/messages"
+        c.post(url, json={"request_id": "broken", "content": CONTENT})
+        for _ in range(20):
+            run = c.get("/api/runs/broken").json()
+            if run["status"] != "running":
+                break
+            time.sleep(0.01)
+        assert run["status"] == "failed"
+        assert "test-secret" not in json.dumps(run)
+        assert "event: terminal" in c.get("/api/runs/broken/events").text
+        assert (
+            c.post(url, json={"request_id": "next", "content": CONTENT}).status_code
+            == 202
+        )

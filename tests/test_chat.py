@@ -171,3 +171,37 @@ def test_model_cannot_swap_dates_between_two_source_items(tmp_path):
         run, _ = submit(c, "请记录明天整理书桌，后天学习 Python")
         assert c.get("/api/todos").json() == []
         assert "请" in run["reply"]
+
+
+@pytest.mark.parametrize(
+    ("content", "items"),
+    [
+        (
+            "明天学 Python 的人应该整理书桌",
+            [{"title": "整理书桌", "date_text": "明天"}],
+        ),
+        (
+            "请记录整理书桌明天，学习 Python 后天",
+            [
+                {"title": "整理书桌", "date_text": "后天"},
+                {"title": "学习 Python", "date_text": "明天"},
+            ],
+        ),
+        (
+            "请记录整理书桌明天和学习 Python 后天",
+            [
+                {"title": "整理书桌", "date_text": "后天"},
+                {"title": "学习 Python", "date_text": "明天"},
+            ],
+        ),
+        ("请记录明年整理书桌", [{"title": "整理书桌", "date_text": None}]),
+        ("请记录春节整理书桌", [{"title": "整理书桌", "date_text": None}]),
+    ],
+)
+def test_ambiguous_permission_or_omitted_and_postposed_dates_never_write(
+    tmp_path, content, items
+):
+    with make_client(tmp_path, tool_response(items)) as c:
+        run, _ = submit(c, content)
+        assert c.get("/api/todos").json() == []
+        assert "请" in run["reply"]
