@@ -525,48 +525,66 @@ function App() {
   const [runs, setRuns] = useState<Run[]>([]);
   const stream = useRef<EventSource | null>(null);
   const tracking = useRef<string | null>(null);
+  const currentSession = useRef("");
+  const refreshVersion = useRef(0);
 
   async function refresh(id: string) {
-    const [data, summary, ideas, savedMemories] = await Promise.all([
-      api<{
-        messages: Message[];
-        latest_run_id: string | null;
-        run_ids: string[];
-      }>(`/sessions/${id}`),
-      api<Overview>("/todos/overview"),
-      api<Suggestion[]>(`/sessions/${id}/suggestions`),
-      api<Memory[]>("/memories"),
-    ]);
-    setTodos(Object.values(summary.groups).flat());
-    setOverview(summary);
-    setSuggestions(ideas);
-    setMemories(savedMemories);
-    const history = await Promise.all(
-      data.run_ids.map((runId) => api<Run>(`/runs/${runId}`)),
-    );
-    // A run may finish after the session snapshot; include its committed reply.
-    const byId = new Map(data.messages.map((message) => [message.id, message]));
-    for (const run of history)
-      for (const message of run.messages) byId.set(message.id, message);
-    setMessages([...byId.values()]);
-    setRuns(history);
-    const latest = history.at(-1) || null;
-    if (latest) {
-      setEvidence(latest.memory);
-      setResearch(latest.research);
-      setWeather(latest.weather);
-      setPhase(runPhase(latest));
-      setSavedCount(activeRun(latest) ? null : latest.todo_ids.length);
-    } else {
-      setEvidence(null);
-      setResearch(null);
-      setWeather(null);
+    const version = ++refreshVersion.current;
+    const isCurrent = () =>
+      currentSession.current === id && refreshVersion.current === version;
+    try {
+      const [data, summary, ideas, savedMemories] = await Promise.all([
+        api<{
+          messages: Message[];
+          latest_run_id: string | null;
+          run_ids: string[];
+        }>(`/sessions/${id}`),
+        api<Overview>("/todos/overview"),
+        api<Suggestion[]>(`/sessions/${id}/suggestions`),
+        api<Memory[]>("/memories"),
+      ]);
+      const history = await Promise.all(
+        data.run_ids.map((runId) => api<Run>(`/runs/${runId}`)),
+      );
+      // Commit the entire view only if this is still its newest refresh.
+      if (!isCurrent()) return undefined;
+      setTodos(Object.values(summary.groups).flat());
+      setOverview(summary);
+      setSuggestions(ideas);
+      setMemories(savedMemories);
+      // A run may finish after the session snapshot; include its committed reply.
+      const byId = new Map(
+        data.messages.map((message) => [message.id, message]),
+      );
+      for (const run of history)
+        for (const message of run.messages) byId.set(message.id, message);
+      setMessages([...byId.values()]);
+      setRuns(history);
+      const latest = history.at(-1) || null;
+      if (latest) {
+        setEvidence(latest.memory);
+        setResearch(latest.research);
+        setWeather(latest.weather);
+        setPhase(runPhase(latest));
+        setSavedCount(activeRun(latest) ? null : latest.todo_ids.length);
+      } else {
+        setEvidence(null);
+        setResearch(null);
+        setWeather(null);
+      }
+      return latest;
+    } catch (reason) {
+      if (!isCurrent()) return undefined;
+      throw reason;
     }
-    return latest;
   }
 
   async function newSession() {
     const created = await api<{ id: string }>("/sessions", {});
+    currentSession.current = created.id;
+    refreshVersion.current++;
+    tracking.current = null;
+    stream.current?.close();
     localStorage.setItem("assistant-session", created.id);
     setSession(created.id);
     setMessages([]);
@@ -577,7 +595,8 @@ function App() {
     setResearch(null);
     setWeather(null);
     setRuns([]);
-    setMemories(await api<Memory[]>("/memories"));
+    const savedMemories = await api<Memory[]>("/memories");
+    if (currentSession.current === created.id) setMemories(savedMemories);
     return created.id;
   }
 
@@ -585,7 +604,7 @@ function App() {
     const run = await api<Run>(`/runs/${runId}`);
     if (tracking.current !== runId) return;
     const latest = await refresh(sessionId);
-    if (tracking.current !== runId) return;
+    if (tracking.current !== runId || latest === undefined) return;
     if (activeRun(run)) return;
     if (latest && activeRun(latest)) {
       follow(latest);
@@ -600,6 +619,7 @@ function App() {
   }
 
   function follow(run: Run) {
+    if (currentSession.current !== run.session_id) return;
     const operation = {
       session: run.session_id,
       request_id: run.id,
@@ -676,6 +696,7 @@ function App() {
   }
 
   async function send(operation: Pending) {
+    refreshVersion.current++;
     setBusy(true);
     setError("");
     setSavedCount(null);
@@ -760,10 +781,12 @@ function App() {
       setTodos(Object.values(summary.groups).flat());
       setOverview(summary);
       let id = localStorage.getItem("assistant-session");
-      let latest: Run | null = null;
+      let latest: Run | null | undefined = null;
       if (id) {
         try {
+          currentSession.current = id;
           latest = await refresh(id);
+          if (currentSession.current !== id || disposed) return;
           setSession(id);
         } catch (reason) {
           if (reason instanceof ApiError && reason.status === 404)
