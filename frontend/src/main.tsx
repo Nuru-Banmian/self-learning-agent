@@ -772,7 +772,7 @@ function App() {
                 生成当天计划
               </button>
             </div>
-            <p className="list-note">建议需明确加入才会成为待办。</p>
+            <p className="list-note">可逐项选择加入；未选择的建议不会保存为待办。</p>
             {suggestions.map((idea) => (
               <article key={idea.id} className="suggestion">
                 <p>{idea.title}</p>

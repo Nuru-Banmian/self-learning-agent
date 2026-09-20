@@ -48,13 +48,26 @@ def explicit_search(content: str) -> bool:
     ):
         return False
     return any(
-        re.match(r"^\s*(?:请|帮我|请帮我)?(?:结合.{1,20})?(?:搜索|查找)", clause)
+        not clause.rstrip().endswith(("?", "？"))
+        and re.match(r"^\s*(?:请|帮我|请帮我)?(?:结合.{1,20})?(?:搜索|查找)", clause)
         and re.search(r"资料|文档|教程|示例|学习", clause)
         and not re.search(
             r"是什么|怎么|如何|怎样|能否|是否|收费|费用|方法|吗|呢", clause
         )
-        for clause in re.split(r"[。！？?；;，,\n]", content)
+        for clause in re.findall(r"[^。！？?；;，,\n]+[。！？?；;，,\n]?", content)
     )
+
+
+def task_count(content: str) -> tuple[int, int]:
+    match = re.search(
+        r"(?:给|生成|推荐|提供|只要|只需).{0,8}?([一二两三四五1-5])(?:个|项)(?:小)?(?:任务|练习)",
+        content,
+    )
+    if match:
+        count = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5}.get(match[1])
+        count = count if count is not None else int(match[1])
+        return count, count
+    return 3, 5
 
 
 def memory_query(content: str, todos: list[dict[str, Any]], local: datetime) -> str:
@@ -146,6 +159,9 @@ async def compose(
     record: dict[str, Any],
     transport: httpx.AsyncBaseTransport | None,
 ) -> ResearchAnswer:
+    minimum, maximum = task_count(run["content"])
+    schema = ResearchAnswer.model_json_schema()
+    schema["properties"]["exercises"].update(minItems=minimum, maxItems=maximum)
     response = await call_model(
         settings,
         store,
@@ -159,6 +175,9 @@ async def compose(
                     "引用只能使用实际来源ID，不在步骤或练习中生成链接。"
                     "摘要不代表已读正文，不宣称读完全文或执行了任何写入。"
                     "练习不要超过200字。当前请求优先于记忆。"
+                    f"生成{minimum}至{maximum}个不同的可选学习任务供用户选择，"
+                    "每项独立可执行；覆盖阅读、动手练习或自测等不同活动，"
+                    "不要只是把同一任务换措辞重复。不要自动加入待办。"
                 ),
             },
             {
@@ -181,7 +200,7 @@ async def compose(
                 "function": {
                     "name": "research_answer",
                     "description": "返回带实际来源标识的步骤与可选练习，不执行写入。",
-                    "parameters": ResearchAnswer.model_json_schema(),
+                    "parameters": schema,
                 },
             }
         ],
@@ -190,6 +209,10 @@ async def compose(
     if len(calls) != 1 or calls[0]["function"]["name"] != "research_answer":
         raise ValueError("资料已取得，但学习安排无效，请重试。")
     answer = ResearchAnswer.model_validate_json(calls[0]["function"]["arguments"])
+    if not minimum <= len(answer.exercises) <= maximum or len(
+        set(answer.exercises)
+    ) != len(answer.exercises):
+        raise ValueError("可选任务数量不符合请求，或存在重复任务。")
     if any(
         re.search(r"https?://|www\.|已(?:读|阅读|通读|保存|添加|完成)", text, re.I)
         for text in [s.instruction for s in answer.steps] + answer.exercises
@@ -234,7 +257,7 @@ def finish_research(
         {"id": str(uuid4()), "title": title, "scheduled_date": local.date().isoformat()}
         for title in (answer.exercises if answer else [])
     ]
-    reply += "\n\n可选练习（尚未加入待办）：\n" + "\n".join(
+    reply += "\n\n可选学习任务（逐项选择加入待办）：\n" + "\n".join(
         s["title"] for s in suggestions
     )
     store.finish(

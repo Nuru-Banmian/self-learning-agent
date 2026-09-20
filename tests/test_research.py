@@ -83,6 +83,9 @@ def research_client(
                 "搜索学习资料需要收费吗？",
                 "查找 Python 官方资料的方法是什么？",
                 "不要搜索，解释生成器",
+                "搜索 Python 学习资料能不能只用本地文件？",
+                "搜索学习资料需要多少钱？",
+                "搜索学习资料有什么限制？",
             )
             and body["tool_choice"] == "auto"
         ):
@@ -95,6 +98,16 @@ def research_client(
                 {"items": [{"title": "学习 Python 生成器", "date_text": "今天"}]},
             )
         elif body["tools"][0]["function"]["name"] == "research_answer":
+            query = json.loads(body["messages"][-1]["content"])["request"]
+            exercises = [
+                "编写生成前三个平方数的生成器",
+                "逐次调用 next 并记录输出",
+                "对比列表与生成器的内存占用",
+            ]
+            if "一个" in query:
+                exercises = exercises[:1]
+            elif "两个" in query:
+                exercises = exercises[:2]
             result = final or operation_response(
                 "research_answer",
                 {
@@ -104,7 +117,7 @@ def research_client(
                             "source_ids": ["S1"],
                         }
                     ],
-                    "exercises": ["编写生成前三个平方数的生成器"],
+                    "exercises": exercises,
                     "memory_usage": [],
                 },
             )
@@ -426,6 +439,9 @@ def test_explicit_search_cannot_be_routed_to_a_write_tool(tmp_path, content):
         "搜索学习资料需要收费吗？",
         "查找 Python 官方资料的方法是什么？",
         "不要搜索，解释生成器",
+        "搜索 Python 学习资料能不能只用本地文件？",
+        "搜索学习资料需要多少钱？",
+        "搜索学习资料有什么限制？",
     ],
 )
 def test_questions_about_search_and_opt_out_do_not_force_external_calls(
@@ -438,3 +454,41 @@ def test_questions_about_search_and_opt_out_do_not_force_external_calls(
         assert run["status"] == "completed"
         assert run["research"] == {}
         assert not any(r[0].url.host == "cloud-iqs.aliyuncs.com" for r in requests)
+
+
+def test_learning_plan_offers_multiple_tasks_and_user_can_pick_two(tmp_path):
+    requests = []
+    with research_client(tmp_path, requests) as c:
+        run, _ = submit(c, "搜索 Python 生成器资料，生成可选学习任务")
+        assert run["status"] == "completed"
+        schema = requests[-1][1]["tools"][0]["function"]["parameters"]
+        assert schema["properties"]["exercises"]["minItems"] == 3
+        session = run["session_id"]
+        ideas = c.get(f"/api/sessions/{session}/suggestions").json()
+        assert len(ideas) == 3
+        assert c.get("/api/todos").json() == []
+        for i in (0, 2):
+            chosen, _ = action(
+                c,
+                session,
+                f"pick-{i}",
+                "accept_suggestion",
+                {"suggestion_id": ideas[i]["id"]},
+            )
+            assert chosen["status"] == "completed"
+        assert {t["title"] for t in c.get("/api/todos").json()} == {
+            "编写生成前三个平方数的生成器",
+            "对比列表与生成器的内存占用",
+        }
+        assert (
+            c.get(f"/api/sessions/{session}/suggestions").json()[1]["todo_id"] is None
+        )
+
+
+def test_explicit_number_of_optional_tasks_is_respected(tmp_path):
+    with research_client(tmp_path, []) as c:
+        run, _ = submit(c, "搜索 Python 生成器资料，给我两个任务")
+        assert run["status"] == "completed"
+        ideas = c.get(f"/api/sessions/{run['session_id']}/suggestions").json()
+        assert len(ideas) == 2
+        assert c.get("/api/todos").json() == []
