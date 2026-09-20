@@ -16,3 +16,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 dist/
+.mypy_cache/
+output/
+.playwright-cli/
