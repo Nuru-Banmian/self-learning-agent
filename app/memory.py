@@ -180,7 +180,12 @@ async def learn(
             rejected += 1
             continue
         if any(
-            re.fullmatch(r"(?:仅限|仅在|只限于|只在)?(?:今天|明天|这次|本次)", c)
+            re.search(
+                r"仅|只限|只在|限于|限时|暂时|最近|期间|时候|时$|"
+                r"(?:这|本|下|今|明|后|上)(?:天|次|周|星期|月|年)|"
+                r"\d+(?:月|日|号)|\d{4}-",
+                c,
+            )
             for c in clauses
             if c != candidate.content
         ):

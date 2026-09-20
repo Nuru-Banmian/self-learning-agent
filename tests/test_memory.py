@@ -306,11 +306,20 @@ def test_empty_extraction_is_success_and_malformed_extraction_is_partial(tmp_pat
         assert c.get("/api/memories").json() == []
 
 
-def test_adjacent_clause_time_limit_cannot_be_dropped(tmp_path):
+@pytest.mark.parametrize(
+    "source",
+    [
+        "仅限今天，我喜欢视频资料",
+        "我喜欢视频资料，但仅限今天",
+        "仅限这周，我喜欢视频资料",
+        "我喜欢视频资料，仅在学习 Python时",
+    ],
+)
+def test_adjacent_clause_time_limit_cannot_be_dropped(tmp_path, source):
     with memory_client(
         tmp_path, extract=lambda s: [candidate(s, content="我喜欢视频资料")]
     ) as c:
-        submit(c, "仅限今天，我喜欢视频资料")
+        submit(c, source)
         assert c.get("/api/memories").json() == []
 
 
