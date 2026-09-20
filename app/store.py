@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from app.memory_policy import fact_attribute
+from app.memory_policy import overlaps
 from app.todos import Clarification
 
 
@@ -56,6 +56,9 @@ class Store:
                     valid_from TEXT NOT NULL, expires_at TEXT, state TEXT NOT NULL,
                     message_id TEXT NOT NULL REFERENCES messages,
                     updated_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS memory_sources (
+                    message_id TEXT PRIMARY KEY REFERENCES messages);
+                INSERT OR IGNORE INTO memory_sources SELECT message_id FROM memories;
             """)
             columns = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
             if "action" not in columns:
@@ -117,7 +120,8 @@ class Store:
         with self.connect() as db:
             rows = db.execute(
                 "SELECT x.*,m.content AS source_content,m.session_id FROM memories x "
-                "JOIN messages m ON x.message_id=m.id ORDER BY x.rowid"
+                "JOIN messages m ON x.message_id=m.id "
+                "WHERE x.state != 'deleted' ORDER BY x.rowid"
             ).fetchall()
             return [
                 dict(r)
@@ -130,6 +134,28 @@ class Store:
                 }
                 for r in rows
             ]
+
+    def source_processed(self, message_id: str) -> bool:
+        with self.connect() as db:
+            return (
+                db.execute(
+                    "SELECT 1 FROM memory_sources WHERE message_id=?", (message_id,)
+                ).fetchone()
+                is not None
+            )
+
+    @staticmethod
+    def _memory_revision(db: sqlite3.Connection) -> int:
+        return int(
+            db.execute(
+                "SELECT COALESCE(MAX(seq),0) FROM events "
+                "WHERE kind IN ('memory_saved','memory_updated','memory_deleted')"
+            ).fetchone()[0]
+        )
+
+    def memory_revision(self) -> int:
+        with self.connect() as db:
+            return self._memory_revision(db)
 
     def memory_record(self, run_id: str, **changes: Any) -> None:
         with self.connect() as db:
@@ -145,11 +171,24 @@ class Store:
             self._event(db, run_id, "memory", record)
 
     def save_memories(
-        self, run_id: str, candidates: list[dict[str, Any]], rejected: int
+        self,
+        run_id: str,
+        candidates: list[dict[str, Any]],
+        rejected: int,
+        expected_revision: int,
     ) -> None:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if self._memory_revision(db) != expected_revision:
+                raise Clarification(
+                    "记忆已在其他会话更新，请重新表达；本轮旧候选未保存。"
+                )
             run = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+            if db.execute(
+                "SELECT 1 FROM memory_sources WHERE message_id=?", (run["message_id"],)
+            ).fetchone():
+                return
+            db.execute("INSERT INTO memory_sources VALUES(?)", (run["message_id"],))
             saved = []
             conflicts = []
             for c in candidates:
@@ -174,21 +213,8 @@ class Store:
                 ]
                 if any(p["content"] == c["content"] for p in previous):
                     continue
-                # Conservatively quarantine overlapping topics, rather than silently
-                # replacing a preference; explicit correction belongs to Issue #5.
-                overlap = [
-                    p
-                    for p in previous
-                    if (
-                        p["topic"] in c["content"]
-                        or c["topic"] in p["content"]
-                        or (
-                            fact_attribute(c["content"]) is not None
-                            and fact_attribute(c["content"])
-                            == fact_attribute(p["content"])
-                        )
-                    )
-                ]
+                # Ambiguous ordinary assertions pause conflicting same-scope facts.
+                overlap = [p for p in previous if overlaps(dict(p), c)]
                 state = "conflict" if overlap else "active"
                 for p in overlap:
                     db.execute(
@@ -325,6 +351,7 @@ class Store:
         tool: str = "create_todos",
         suggestions: list[dict[str, Any]] | None = None,
         accept: str | None = None,
+        memory_change: dict[str, Any] | None = None,
     ) -> None:
         # Todos, success evidence, assistant message and terminal state commit together.
         with self.connect() as db:
@@ -333,6 +360,65 @@ class Store:
             if run is None or run["status"] != "running":
                 return
             ids = []
+            if memory_change:
+                target = db.execute(
+                    "SELECT * FROM memories WHERE id=? AND state != 'deleted'",
+                    (memory_change["memory_id"],),
+                ).fetchone()
+                if (
+                    target is None
+                    or target["message_id"] != memory_change["expected_source_id"]
+                ):
+                    raise Clarification(
+                        "记忆已变化或已删除，请刷新后重新选择；未修改。"
+                    )
+                for source_id in (target["message_id"], run["message_id"]):
+                    db.execute(
+                        "INSERT OR IGNORE INTO memory_sources VALUES(?)", (source_id,)
+                    )
+                if memory_change["tool"] == "update_memory":
+                    others = db.execute(
+                        "SELECT * FROM memories WHERE id != ? AND state='active'",
+                        (target["id"],),
+                    ).fetchall()
+                    if any(overlaps(dict(m), memory_change) for m in others):
+                        raise Clarification(
+                            "新内容与另一条生效记忆重叠，请明确要更正的那条记忆；未修改。"
+                        )
+                    db.execute(
+                        "UPDATE memories SET content=?,category=?,topic=?,scope=?,"
+                        "task_id=?,valid_from=?,expires_at=?,state='active',"
+                        "message_id=?,updated_at=? WHERE id=?",
+                        tuple(
+                            memory_change[k]
+                            for k in (
+                                "content",
+                                "category",
+                                "topic",
+                                "scope",
+                                "task_id",
+                                "valid_from",
+                                "expires_at",
+                            )
+                        )
+                        + (run["message_id"], run["received_at"], target["id"]),
+                    )
+                    reply = "已更正记忆：" + memory_change["content"]
+                    kind = "memory_updated"
+                else:
+                    db.execute(
+                        "UPDATE memories SET state='deleted' WHERE id=?",
+                        (target["id"],),
+                    )
+                    reply, kind = "已删除记忆。", "memory_deleted"
+                self._event(db, run_id, kind, {"memory_id": target["id"]})
+                db.execute(
+                    "UPDATE runs SET memory=? WHERE id=?",
+                    (
+                        json.dumps({"changed_ids": [target["id"]], "operation": kind}),
+                        run_id,
+                    ),
+                )
             if accept:
                 suggestion = db.execute(
                     "SELECT s.* FROM suggestions s JOIN runs r ON r.id=s.run_id "

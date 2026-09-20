@@ -359,7 +359,8 @@ footer {
 .todo-editor {
   padding: 12px 0;
 }
-.todo-editor input {
+.todo-editor input,
+.todo-editor select {
   width: 100%;
   padding: 8px;
   border: 1px solid #dfe3d7;

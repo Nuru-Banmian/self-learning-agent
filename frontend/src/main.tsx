@@ -41,8 +41,19 @@ const memoryCategories: Record<string, string> = {
   background: "背景",
   condition: "临时条件",
 };
+const memoryValidity: Record<string, string> = {
+  ongoing: "持续有效",
+  today: "仅今天",
+  tomorrow: "仅明天",
+  task: "直到对应待办完成",
+};
 type Action = {
-  tool: "update_todo" | "complete_todo" | "accept_suggestion";
+  tool:
+    | "update_todo"
+    | "complete_todo"
+    | "accept_suggestion"
+    | "update_memory"
+    | "delete_memory";
   arguments: Record<string, unknown>;
 };
 type Pending = {
@@ -66,6 +77,194 @@ const groups: Record<string, string> = {
   upcoming: "未来安排",
   completed: "已完成",
 };
+
+function MemoryEditor({
+  memory,
+  disabled,
+  todos,
+  act,
+}: {
+  memory: Memory;
+  disabled: boolean;
+  todos: Todo[];
+  act: (content: string, action: Action) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [content, setContent] = useState(memory.content);
+  const [topic, setTopic] = useState(memory.topic);
+  const [scope, setScope] = useState(memory.scope);
+  const [taskId, setTaskId] = useState(memory.task_id || "");
+  const inferValidity = () =>
+    memory.content.includes("今天")
+      ? "today"
+      : memory.content.includes("明天")
+        ? "tomorrow"
+        : memory.scope === "task"
+          ? "task"
+          : "ongoing";
+  const [validity, setValidity] = useState(inferValidity);
+  const target = {
+    memory_id: memory.id,
+    expected_source_id: memory.source.message_id,
+  };
+  return (
+    <div className="memory-maintenance">
+      <div className="todo-actions">
+        <button
+          className="quiet"
+          disabled={disabled}
+          onClick={() => {
+            setContent(memory.content);
+            setTopic(memory.topic);
+            setScope(memory.scope);
+            setTaskId(memory.task_id || "");
+            setValidity(inferValidity());
+            setEditing(!editing);
+            setRemoving(false);
+          }}
+        >
+          编辑记忆
+        </button>
+        <button
+          className="quiet"
+          disabled={disabled}
+          onClick={() => {
+            setRemoving(!removing);
+            setEditing(false);
+          }}
+        >
+          删除记忆
+        </button>
+      </div>
+      {removing && (
+        <div role="group" aria-label="确认删除记忆">
+          <p>
+            删除后不再用于回答。旧来源消息不会恢复此记忆；之后重新表达可以再次保存。
+          </p>
+          <button
+            className="quiet"
+            disabled={disabled}
+            onClick={() =>
+              act(`删除记忆：${memory.content}`, {
+                tool: "delete_memory",
+                arguments: target,
+              })
+            }
+          >
+            确认删除
+          </button>
+          <button className="quiet" onClick={() => setRemoving(false)}>
+            取消
+          </button>
+        </div>
+      )}
+      {editing && (
+        <form
+          className="todo-editor"
+          aria-label="编辑记忆"
+          onSubmit={(event) => {
+            event.preventDefault();
+            act(
+              `更正记忆：${memory.content} → ${content.trim()}（${scope === "task" ? "任务限定" : "一般范围"}，${memoryValidity[validity]}）`,
+              {
+                tool: "update_memory",
+                arguments: {
+                  ...target,
+                  content: content.trim(),
+                  topic: topic.trim(),
+                  scope,
+                  task_id: scope === "task" ? taskId : null,
+                  validity,
+                },
+              },
+            );
+          }}
+        >
+          <label>
+            记忆内容
+            <input
+              aria-label="记忆内容"
+              required
+              minLength={3}
+              maxLength={300}
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+            />
+          </label>
+          <label>
+            主题
+            <input
+              aria-label="记忆主题"
+              required
+              minLength={2}
+              maxLength={30}
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+            />
+          </label>
+          <label>
+            适用范围
+            <select
+              aria-label="适用范围"
+              value={scope}
+              onChange={(e) => setScope(e.target.value)}
+            >
+              <option value="general">一般范围</option>
+              <option value="task">指定待办</option>
+            </select>
+          </label>
+          {scope === "task" && (
+            <label>
+              对应待办
+              <select
+                aria-label="对应待办"
+                required
+                value={taskId}
+                onChange={(e) => setTaskId(e.target.value)}
+              >
+                <option value="">请选择待办</option>
+                {todos
+                  .filter((t) => t.status === "pending")
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.title}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
+          <label>
+            有效期限
+            <select
+              aria-label="有效期限"
+              value={validity}
+              onChange={(e) => setValidity(e.target.value)}
+            >
+              <option value="ongoing">持续有效</option>
+              <option value="today">仅今天</option>
+              <option value="tomorrow">仅明天</option>
+              <option value="task">直到对应待办完成</option>
+            </select>
+          </label>
+          <small>
+            内容须是完整陈述，主题取自原文。临时条件请写明“今天”“明天”或完整待办标题，并选择对应范围、期限。
+          </small>
+          <button className="primary" disabled={disabled}>
+            保存记忆修改
+          </button>
+          <button
+            type="button"
+            className="quiet"
+            onClick={() => setEditing(false)}
+          >
+            取消编辑
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
 
 function TodoCard({
   todo,
@@ -273,6 +472,12 @@ function App() {
       );
     });
     events.addEventListener("memory_saved", () => setPhase("记忆保存已提交"));
+    events.addEventListener("memory_updated", () =>
+      setPhase("记忆更正已提交，正在读回"),
+    );
+    events.addEventListener("memory_deleted", () =>
+      setPhase("记忆删除已提交，正在读回"),
+    );
     events.addEventListener("tool_call", () => setPhase("正在处理待办或计划"));
     events.addEventListener("saved", () => setPhase("保存已提交，正在读回"));
     events.addEventListener("terminal", () => {
@@ -569,6 +774,13 @@ function App() {
                       : "持续有效"}
                 </small>
                 {memory.task_id && <p>对应待办：{memory.task_id}</p>}
+                <MemoryEditor
+                  key={memory.source.message_id}
+                  memory={memory}
+                  todos={todos}
+                  disabled={busy || !!pending}
+                  act={act}
+                />
                 <details>
                   <summary>来源表达与标识</summary>
                   <p>{memory.source.content}</p>

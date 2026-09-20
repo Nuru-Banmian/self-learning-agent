@@ -233,6 +233,37 @@ def test_real_process_restart_loads_memory_without_old_conversation(tmp_path):
             assert run["memory"]["usage"][0]["memory_id"] == saved[0]["id"]
             assert len(requests[-1]["messages"]) == 3
             assert "event: terminal" in events
+            session = c.post("/api/sessions").json()["id"]
+            old = saved[0]
+            action(
+                c,
+                session,
+                "remove-memory",
+                "delete_memory",
+                {
+                    "memory_id": old["id"],
+                    "expected_source_id": old["source"]["message_id"],
+                },
+            )
+            assert c.get("/api/memories").json() == []
+        with server_process(port, database, url, api_key="") as (c, offline):
+            assert offline.pid != restarted.pid
+            result, _ = action(
+                c,
+                session,
+                "reprocess-original",
+                "reprocess_memory",
+                {
+                    "source_message_id": old["source"]["message_id"],
+                },
+            )
+            assert result["status"] == "completed" and result["model_calls"] == 0
+            assert c.get("/api/memories").json() == []
+        with server_process(port, database, url) as (c, _):
+            submit(c, "我喜欢优先阅读官方资料", "reexpress")
+            new = c.get("/api/memories").json()[0]
+            assert new["id"] != old["id"]
+            assert new["source"]["message_id"] != old["source"]["message_id"]
     finally:
         provider.shutdown()
         provider.server_close()

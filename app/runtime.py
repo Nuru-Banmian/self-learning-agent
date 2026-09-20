@@ -9,6 +9,7 @@ import httpx
 from pydantic import ValidationError
 
 from app.memory import Answer, answer_text, learn, select_memories
+from app.memory_changes import chat_memory_change, prepare_memory_change
 from app.model import ModelError, call_model
 from app.settings import Settings
 from app.store import Store
@@ -39,6 +40,26 @@ async def execute(
             )
             if run["action"]:
                 action = run["action"]
+                if action["tool"] == "reprocess_memory":
+                    args = action["arguments"]
+                    if set(args) != {"source_message_id"} or not isinstance(
+                        args["source_message_id"], str
+                    ):
+                        raise Clarification("请指定原始来源消息标识。")
+                    if not store.source_processed(args["source_message_id"]):
+                        raise Clarification(
+                            "此来源没有已提交的学习记录，请重新明确表达信息。"
+                        )
+                    store.finish(
+                        run_id, "completed", "该来源已处理，本次未重新学习或恢复记忆。"
+                    )
+                    return
+                if action["tool"] in ("update_memory", "delete_memory"):
+                    memory_change = prepare_memory_change(
+                        action["tool"], action["arguments"], local, store.todos()
+                    )
+                    store.finish(run_id, "completed", "", memory_change=memory_change)
+                    return
                 if action["tool"] == "accept_suggestion":
                     accepted = prepare_accept(
                         action["arguments"], store.suggestions(run["session_id"]), None
@@ -60,11 +81,21 @@ async def execute(
                     run_id, "completed", "", change=change, tool=action["tool"]
                 )
                 return
+            correction = chat_memory_change(
+                run["content"], store.memories(), store.todos(), local
+            )
+            if correction:
+                store.event(
+                    run_id, "role", {"role": "learning", "status": "processing"}
+                )
+                store.finish(run_id, "completed", "", memory_change=correction)
+                return
             try:
                 await learn(store, settings, run, local, transport)
             except (ModelError, ValueError, sqlite3.Error, KeyError, TypeError):
                 store.memory_record(run_id, learning="failed", error="memory_learning")
             loaded = select_memories(store, run["content"], local)
+            revision = store.memory_revision()
             store.memory_record(run_id, loaded=loaded, usage=[], effect_verified=False)
             store.event(run_id, "role", {"role": "main", "status": "processing"})
             response = await call_model(
@@ -109,6 +140,9 @@ async def execute(
                 ],
                 transport,
             )
+            if store.memory_revision() != revision:
+                store.memory_record(run_id, loaded=[], usage=[], effect_verified=False)
+                raise Clarification("记忆在回答期间已更新，请重新提问以采用最新状态。")
             calls = response.get("tool_calls") or []
             if not calls:
                 reply = render_overview(overview(store.todos(), local.date()))
@@ -205,7 +239,7 @@ async def execute(
     except TimeoutError:
         store.finish(run_id, "failed", "处理超时，未保存待办。", error="timeout")
     except sqlite3.Error:
-        store.finish(run_id, "failed", "保存失败，本次待办未写入。", error="storage")
+        store.finish(run_id, "failed", "保存失败，本次修改未写入。", error="storage")
     except (KeyError, TypeError, IndexError):
         store.finish(
             run_id, "failed", "模型返回无效操作，未保存待办。", error="invalid_tool"
