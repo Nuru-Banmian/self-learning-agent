@@ -32,6 +32,16 @@ type MemoryEvidence = {
 };
 type Run = {
   id: string;
+  session_id: string;
+  content: string;
+  action: Action | null;
+  error: string | null;
+  queue_position: number;
+  retryable: boolean;
+  retry_of: string | null;
+  retry_run_id: string | null;
+  events: { seq: number; kind: string; data: Record<string, unknown> }[];
+  messages: Message[];
   status: string;
   reply: string;
   todo_ids: string[];
@@ -142,7 +152,18 @@ type Pending = {
   request_id: string;
   content: string;
   action?: Action;
+  retry_of?: string;
 };
+const activeRun = (run: Run) =>
+  run.status === "running" || run.status === "queued";
+function runPhase(run: Run) {
+  if (run.status === "queued")
+    return `排队中 · 前面还有 ${run.queue_position} 轮`;
+  if (run.status === "running") return "正在处理";
+  if (run.status === "completed") return "处理完成";
+  if (run.status === "partial") return "部分完成";
+  return run.error === "interrupted" ? "处理已中断" : "处理失败";
+}
 type Health = { model_configured: boolean; timezone: string };
 type Overview = { today: string; groups: Record<string, Todo[]> };
 type Suggestion = {
@@ -453,21 +474,32 @@ function TodoCard({
   );
 }
 
+class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
+}
+
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(
     `/api${path}`,
     body === undefined
-      ? undefined
+      ? { signal: AbortSignal.timeout(10000) }
       : {
           method: "POST",
+          signal: AbortSignal.timeout(10000),
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         },
   );
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(
+    throw new ApiError(
       typeof data.detail === "string" ? data.detail : "请求失败，请稍后重试。",
+      response.status,
     );
   }
   return response.json() as Promise<T>;
@@ -490,32 +522,47 @@ function App() {
   const [evidence, setEvidence] = useState<MemoryEvidence | null>(null);
   const [research, setResearch] = useState<ResearchEvidence | null>(null);
   const [weather, setWeather] = useState<WeatherEvidence | null>(null);
+  const [runs, setRuns] = useState<Run[]>([]);
   const stream = useRef<EventSource | null>(null);
+  const tracking = useRef<string | null>(null);
 
   async function refresh(id: string) {
     const [data, summary, ideas, savedMemories] = await Promise.all([
-      api<{ messages: Message[]; latest_run_id: string | null }>(
-        `/sessions/${id}`,
-      ),
+      api<{
+        messages: Message[];
+        latest_run_id: string | null;
+        run_ids: string[];
+      }>(`/sessions/${id}`),
       api<Overview>("/todos/overview"),
       api<Suggestion[]>(`/sessions/${id}/suggestions`),
       api<Memory[]>("/memories"),
     ]);
-    setMessages(data.messages);
     setTodos(Object.values(summary.groups).flat());
     setOverview(summary);
     setSuggestions(ideas);
     setMemories(savedMemories);
-    if (data.latest_run_id) {
-      const latest = await api<Run>(`/runs/${data.latest_run_id}`);
+    const history = await Promise.all(
+      data.run_ids.map((runId) => api<Run>(`/runs/${runId}`)),
+    );
+    // A run may finish after the session snapshot; include its committed reply.
+    const byId = new Map(data.messages.map((message) => [message.id, message]));
+    for (const run of history)
+      for (const message of run.messages) byId.set(message.id, message);
+    setMessages([...byId.values()]);
+    setRuns(history);
+    const latest = history.at(-1) || null;
+    if (latest) {
       setEvidence(latest.memory);
       setResearch(latest.research);
       setWeather(latest.weather);
+      setPhase(runPhase(latest));
+      setSavedCount(activeRun(latest) ? null : latest.todo_ids.length);
     } else {
       setEvidence(null);
       setResearch(null);
       setWeather(null);
     }
+    return latest;
   }
 
   async function newSession() {
@@ -529,31 +576,51 @@ function App() {
     setEvidence(null);
     setResearch(null);
     setWeather(null);
+    setRuns([]);
     setMemories(await api<Memory[]>("/memories"));
     return created.id;
   }
 
   async function finish(runId: string, sessionId: string) {
-    stream.current?.close();
     const run = await api<Run>(`/runs/${runId}`);
-    await refresh(sessionId);
-    setSavedCount(run.todo_ids.length);
-    setPhase(
-      run.status === "completed"
-        ? "处理完成"
-        : run.status === "partial"
-          ? "部分完成"
-          : "处理失败",
-    );
+    if (tracking.current !== runId) return;
+    const latest = await refresh(sessionId);
+    if (tracking.current !== runId) return;
+    if (activeRun(run)) return;
+    if (latest && activeRun(latest)) {
+      follow(latest);
+      return;
+    }
+    stream.current?.close();
+    tracking.current = null;
     setBusy(false);
     setPending(null);
+    setError("");
     localStorage.removeItem("assistant-pending");
+  }
+
+  function follow(run: Run) {
+    const operation = {
+      session: run.session_id,
+      request_id: run.id,
+      content: run.content,
+      action: run.action || undefined,
+    };
+    tracking.current = run.id;
+    setPhase(runPhase(run));
+    setPending(operation);
+    localStorage.setItem("assistant-pending", JSON.stringify(operation));
+    if (activeRun(run)) {
+      setBusy(true);
+      watch(operation);
+    } else void finish(run.id, run.session_id).catch(failed);
   }
 
   function watch(operation: Pending) {
     stream.current?.close();
     const events = new EventSource(`/api/runs/${operation.request_id}/events`);
     stream.current = events;
+    events.addEventListener("queued", () => setPhase("排队中，等待前一轮完成"));
     events.addEventListener("role", (event) => {
       const data = JSON.parse((event as MessageEvent).data);
       setPhase(
@@ -580,8 +647,8 @@ function App() {
             : data.tool === "qweather_daily"
               ? "执行 Agent 正在查询天气"
               : data.tool === "iqs_read_page"
-            ? "执行 Agent 正在读取正文"
-            : "执行 Agent 正在搜索"
+                ? "执行 Agent 正在读取正文"
+                : "执行 Agent 正在搜索"
           : "正在处理待办或计划",
       );
     });
@@ -598,7 +665,8 @@ function App() {
     events.onerror = () => {
       events.close();
       setBusy(false);
-      setError("连接中断。可重试同一请求，已提交的待办不会重复新增。");
+      setPhase("连接中断，正在查询已保存状态");
+      setError("连接中断，正在重新读取状态。也可重试同一请求，不会重复写入。");
     };
   }
 
@@ -612,18 +680,20 @@ function App() {
     setError("");
     setSavedCount(null);
     setPending(operation);
+    tracking.current = operation.request_id;
     setResearch(null);
     localStorage.setItem("assistant-pending", JSON.stringify(operation));
     try {
-      const run = await api<Run>(`/sessions/${operation.session}/messages`, {
-        request_id: operation.request_id,
-        content: operation.content,
-        action: operation.action,
-      });
+      const run = operation.retry_of
+        ? await api<Run>(`/runs/${operation.retry_of}/retry`, {})
+        : await api<Run>(`/sessions/${operation.session}/messages`, {
+            request_id: operation.request_id,
+            content: operation.content,
+            action: operation.action,
+          });
       setInput("");
       await refresh(operation.session);
-      if (run.status === "running") watch(operation);
-      else await finish(run.id, operation.session);
+      follow(run);
     } catch (reason) {
       failed(reason);
     }
@@ -633,6 +703,37 @@ function App() {
     if (!session || busy || pending) return;
     void send({ session, request_id: crypto.randomUUID(), content, action });
   }
+
+  useEffect(() => {
+    if (!pending) return;
+    let disposed = false;
+    let polling = false;
+    const timer = window.setInterval(async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        if (pending.retry_of) {
+          const original = await api<Run>(`/runs/${pending.retry_of}`);
+          if (original.retry_run_id && !disposed) {
+            const child = await api<Run>(`/runs/${original.retry_run_id}`);
+            if (!disposed) follow(child);
+          }
+        } else if (!disposed) await finish(pending.request_id, pending.session);
+      } catch {
+        if (!disposed) {
+          setBusy(false);
+          setPhase("连接中断，等待重新读取状态");
+          setError("暂时无法读取状态，正在重新连接；可安全重试同一请求。");
+        }
+      } finally {
+        polling = false;
+      }
+    }, 2000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [pending]);
 
   useEffect(() => {
     if (!session) return;
@@ -659,12 +760,15 @@ function App() {
       setTodos(Object.values(summary.groups).flat());
       setOverview(summary);
       let id = localStorage.getItem("assistant-session");
+      let latest: Run | null = null;
       if (id) {
         try {
-          await refresh(id);
+          latest = await refresh(id);
           setSession(id);
-        } catch {
-          id = await newSession();
+        } catch (reason) {
+          if (reason instanceof ApiError && reason.status === 404)
+            id = await newSession();
+          else throw reason;
         }
       } else id = await newSession();
       const stored = localStorage.getItem("assistant-pending");
@@ -672,9 +776,17 @@ function App() {
         const operation = JSON.parse(stored) as Pending;
         if (operation.session === id) {
           setPending(operation);
+          tracking.current = operation.request_id;
           setError("有一条请求待确认，可安全重试查看结果。");
+          if (!operation.retry_of) {
+            try {
+              follow(await api<Run>(`/runs/${operation.request_id}`));
+            } catch (reason) {
+              failed(reason);
+            }
+          }
         }
-      }
+      } else if (latest && activeRun(latest)) follow(latest);
     }
     void init().catch(failed);
     return () => {
@@ -741,6 +853,11 @@ function App() {
               {pending && !busy && (
                 <button onClick={() => void send(pending)}>重试同一请求</button>
               )}
+              {!pending && (
+                <button onClick={() => window.location.reload()}>
+                  重新连接
+                </button>
+              )}
             </div>
           )}
           <form
@@ -773,6 +890,58 @@ function App() {
               </button>
             </div>
           </form>
+          <section className="suggestions" aria-label="请求执行记录">
+            <h2>请求执行记录</h2>
+            <p className="list-note">
+              状态与保存结果来自服务端；回复文本不代表整轮完成。
+            </p>
+            {runs.map((run) => (
+              <article className="suggestion" key={run.id}>
+                <p>{run.content}</p>
+                <strong>{runPhase(run)}</strong>
+                <p>已提交待办变更 {run.todo_ids.length} 项</p>
+                {run.retry_of && <small>这是一次重试，原记录保留。</small>}
+                {run.retryable && !run.retry_run_id && (
+                  <button
+                    className="quiet"
+                    disabled={busy || !!pending}
+                    onClick={() =>
+                      void send({
+                        session,
+                        request_id: run.id,
+                        content: run.content,
+                        retry_of: run.id,
+                      })
+                    }
+                  >
+                    重试未完成处理
+                  </button>
+                )}
+                {run.retry_run_id && <p>已有重试记录，请查看后续结果。</p>}
+                <details>
+                  <summary>查看回复与执行记录</summary>
+                  <p>{run.reply || "尚无最终回复"}</p>
+                  <small>请求 {run.id}</small>
+                  <ol>
+                    {run.events.map((event) => (
+                      <li key={event.seq}>
+                        {event.seq} · {event.kind}
+                        {typeof event.data.role === "string"
+                          ? ` · ${event.data.role}`
+                          : ""}
+                        {typeof event.data.tool === "string"
+                          ? ` · ${event.data.tool}`
+                          : ""}
+                        {typeof event.data.status === "string"
+                          ? ` · ${event.data.status}`
+                          : ""}
+                      </li>
+                    ))}
+                  </ol>
+                </details>
+              </article>
+            ))}
+          </section>
           <ResearchPanel research={research} />
           <WeatherPanel weather={weather} />
           <section className="suggestions" aria-label="行动建议">
@@ -786,7 +955,9 @@ function App() {
                 生成当天计划
               </button>
             </div>
-            <p className="list-note">可逐项选择加入；未选择的建议不会保存为待办。</p>
+            <p className="list-note">
+              可逐项选择加入；未选择的建议不会保存为待办。
+            </p>
             {suggestions.map((idea) => (
               <article key={idea.id} className="suggestion">
                 <p>{idea.title}</p>

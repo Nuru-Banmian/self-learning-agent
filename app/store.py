@@ -75,6 +75,28 @@ class Store:
                 db.execute(
                     "ALTER TABLE runs ADD COLUMN weather TEXT NOT NULL DEFAULT '{}'"
                 )
+            if "reply_message_id" not in columns:
+                db.execute("ALTER TABLE runs ADD COLUMN reply_message_id TEXT")
+                db.execute(
+                    "UPDATE runs SET reply_message_id=(SELECT id FROM messages m "
+                    "WHERE m.session_id=runs.session_id AND m.role='assistant' "
+                    "AND m.received_at=runs.received_at "
+                    "AND m.content=runs.reply LIMIT 1)"
+                )
+            if "retry_of" not in columns:
+                db.execute("ALTER TABLE runs ADD COLUMN retry_of TEXT REFERENCES runs")
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_retry ON runs(retry_of)")
+            if "result_committed" not in columns:
+                db.execute(
+                    "ALTER TABLE runs ADD COLUMN "
+                    "result_committed INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execute(
+                    "UPDATE runs SET result_committed=1 WHERE todo_ids != '[]' "
+                    "OR EXISTS(SELECT 1 FROM suggestions s WHERE s.run_id=runs.id) "
+                    "OR EXISTS(SELECT 1 FROM events e WHERE e.run_id=runs.id "
+                    "AND e.kind IN ('memory_updated','memory_deleted'))"
+                )
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -95,6 +117,7 @@ class Store:
 
     def session(self, session_id: str) -> dict[str, Any] | None:
         with self.connect() as db:
+            db.execute("BEGIN")
             row = db.execute(
                 "SELECT * FROM sessions WHERE id=?", (session_id,)
             ).fetchone()
@@ -111,10 +134,18 @@ class Store:
             return dict(row) | {
                 "messages": [dict(m) for m in messages],
                 "latest_run_id": latest[0] if latest else None,
+                "run_ids": [
+                    r[0]
+                    for r in db.execute(
+                        "SELECT id FROM runs WHERE session_id=? ORDER BY rowid",
+                        (session_id,),
+                    )
+                ],
             }
 
     def run(self, run_id: str) -> dict[str, Any] | None:
         with self.connect() as db:
+            db.execute("BEGIN")
             row = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
             if row is None:
                 return None
@@ -124,6 +155,33 @@ class Store:
                 "memory": json.loads(row["memory"]),
                 "research": json.loads(row["research"]),
                 "weather": json.loads(row["weather"]),
+                "retryable": self._retryable(row),
+                "retry_run_id": next(
+                    (
+                        r[0]
+                        for r in db.execute(
+                            "SELECT id FROM runs WHERE retry_of=?",
+                            (run_id,),
+                        )
+                    ),
+                    None,
+                ),
+                "queue_position": db.execute(
+                    "SELECT COUNT(*) FROM runs WHERE session_id=? "
+                    "AND status IN ('running','queued') "
+                    "AND rowid < (SELECT rowid FROM runs WHERE id=?)",
+                    (row["session_id"], run_id),
+                ).fetchone()[0]
+                if row["status"] == "queued"
+                else 0,
+                "events": self._events(db, run_id, 0),
+                "messages": [
+                    dict(m)
+                    for m in db.execute(
+                        "SELECT * FROM messages WHERE id IN (?,?) ORDER BY rowid",
+                        (row["message_id"], row["reply_message_id"]),
+                    )
+                ],
             }
 
     def weather_record(self, run_id: str, record: dict[str, Any]) -> None:
@@ -318,12 +376,7 @@ class Store:
                 ):
                     raise Conflict("请求标识已用于其他消息，请使用新的标识。")
                 return False
-            active = db.execute(
-                "SELECT id FROM runs WHERE session_id=? AND status='running'",
-                (session_id,),
-            ).fetchone()
-            if active:
-                raise Conflict("此会话正在处理上一条消息，请等待完成。")
+            self._check_queue(db, session_id)
             message_id = str(uuid4())
             db.execute(
                 "INSERT INTO messages VALUES (?, ?, 'user', ?, ?)",
@@ -331,12 +384,84 @@ class Store:
             )
             db.execute(
                 "INSERT INTO runs(id,session_id,message_id,content,received_at,status) "
-                "VALUES(?,?,?,?,?,'running')",
+                "VALUES(?,?,?,?,?,'queued')",
                 (run_id, session_id, message_id, content, now),
             )
             db.execute("UPDATE runs SET action=? WHERE id=?", (encoded, run_id))
-            self._event(db, run_id, "role", {"role": "main", "status": "processing"})
+            self._event(db, run_id, "queued", {"status": "queued"})
             return True
+
+    @staticmethod
+    def _check_queue(db: sqlite3.Connection, session_id: str) -> None:
+        count = db.execute(
+            "SELECT COUNT(*) FROM runs WHERE session_id=? "
+            "AND status IN ('running','queued')",
+            (session_id,),
+        ).fetchone()[0]
+        if count >= 10:
+            raise Conflict("此会话已有 10 条待处理请求，请等待后重试。")
+
+    @staticmethod
+    def _retryable(run: sqlite3.Row) -> bool:
+        return run["status"] in ("failed", "partial") and not run["result_committed"]
+
+    def retry(self, run_id: str) -> str:
+        # One child per attempt makes retry submission itself idempotent.
+        # Reuse the source message so committed learning cannot be repeated.
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            run = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+            if run is None:
+                raise KeyError(run_id)
+            child = db.execute(
+                "SELECT id FROM runs WHERE retry_of=?", (run_id,)
+            ).fetchone()
+            if child:
+                return str(child[0])
+            if not self._retryable(run):
+                return run_id
+            self._check_queue(db, run["session_id"])
+            new_id = str(uuid4())
+            memory = json.loads(run["memory"])
+            retained = {
+                k: memory[k] for k in ("saved_ids", "conflict_ids") if k in memory
+            }
+            db.execute(
+                "INSERT INTO runs(id,session_id,message_id,content,received_at,status,"
+                "action,memory,retry_of) VALUES(?,?,?,?,?,'queued',?,?,?)",
+                (
+                    new_id,
+                    run["session_id"],
+                    run["message_id"],
+                    run["content"],
+                    run["received_at"],
+                    run["action"],
+                    json.dumps(retained),
+                    run_id,
+                ),
+            )
+            self._event(db, new_id, "queued", {"status": "queued", "retry_of": run_id})
+            return new_id
+
+    def start_next(self, session_id: str) -> str | None:
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute(
+                "SELECT 1 FROM runs WHERE session_id=? AND status='running'",
+                (session_id,),
+            ).fetchone():
+                return None
+            row = db.execute(
+                "SELECT id FROM runs WHERE session_id=? AND status='queued' "
+                "ORDER BY rowid LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            run_id = str(row[0])
+            db.execute("UPDATE runs SET status='running' WHERE id=?", (run_id,))
+            self._event(db, run_id, "role", {"role": "main", "status": "processing"})
+            return run_id
 
     @staticmethod
     def _event(
@@ -353,11 +478,17 @@ class Store:
 
     def events(self, run_id: str, after: int) -> list[dict[str, Any]]:
         with self.connect() as db:
-            rows = db.execute(
-                "SELECT * FROM events WHERE run_id=? AND seq>? ORDER BY seq",
-                (run_id, after),
-            ).fetchall()
-            return [dict(r) | {"data": json.loads(r["data"])} for r in rows]
+            return self._events(db, run_id, after)
+
+    @staticmethod
+    def _events(
+        db: sqlite3.Connection, run_id: str, after: int
+    ) -> list[dict[str, Any]]:
+        rows = db.execute(
+            "SELECT * FROM events WHERE run_id=? AND seq>? ORDER BY seq",
+            (run_id, after),
+        ).fetchall()
+        return [dict(r) | {"data": json.loads(r["data"])} for r in rows]
 
     def count_call(self, run_id: str) -> None:
         with self.connect() as db:
@@ -383,7 +514,7 @@ class Store:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             run = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
-            if run is None or run["status"] != "running":
+            if run is None or run["status"] not in ("running", "queued"):
                 return
             ids = []
             if memory_change:
@@ -605,18 +736,28 @@ class Store:
                     "\n\n部分记忆候选无法核实，未保存；"
                     "请用完整陈述明确背景、偏好或条件。"
                 )
+            reply_message_id = str(uuid4())
             db.execute(
                 "INSERT INTO messages VALUES(?,?,'assistant',?,?)",
                 (
-                    str(uuid4()),
+                    reply_message_id,
                     run["session_id"],
                     reply,
                     run["received_at"],
                 ),
             )
             db.execute(
-                "UPDATE runs SET status=?,reply=?,todo_ids=?,error=? WHERE id=?",
-                (status, reply, json.dumps(ids), error, run_id),
+                "UPDATE runs SET status=?,reply=?,todo_ids=?,error=?,"
+                "reply_message_id=?,result_committed=? WHERE id=?",
+                (
+                    status,
+                    reply,
+                    json.dumps(ids),
+                    error,
+                    reply_message_id,
+                    bool(items or change or memory_change or accept or suggestions),
+                    run_id,
+                ),
             )
             self._event(db, run_id, "reply", {"text": reply})
             self._event(db, run_id, "terminal", {"status": status, "error": error})
@@ -624,7 +765,11 @@ class Store:
     def interrupt_unfinished(self) -> None:
         with self.connect() as db:
             ids = [
-                r[0] for r in db.execute("SELECT id FROM runs WHERE status='running'")
+                r[0]
+                for r in db.execute(
+                    "SELECT id FROM runs WHERE status IN ('running','queued') "
+                    "ORDER BY rowid"
+                )
             ]
         for run_id in ids:
             self.finish(
