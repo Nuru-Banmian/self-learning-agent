@@ -94,7 +94,6 @@ class IQS:
                             if not isinstance(parsed, dict) or parsed.get("errorCode"):
                                 raise ValueError("invalid response")
                             result = parsed
-                            call["status"] = "success"
             except httpx.HTTPStatusError as exc:
                 retry = exc.response.status_code in (429, 500, 502, 503, 504)
                 call.update(status="error", error="provider_http")
@@ -104,13 +103,14 @@ class IQS:
             except (ValueError, TypeError):
                 call.update(status="error", error="invalid_response")
             finally:
-                if call["status"] == "running":
+                if result is None and call["status"] == "running":
                     call.update(status="error", error="interrupted")
                 call["elapsed_ms"] = round((monotonic() - started) * 1000)
-                self.store.research_record(self.run_id, self.record)
-                self.store.event(
-                    self.run_id, "tool_result", {"role": "execution", **call}
-                )
+                if result is None:
+                    self.store.research_record(self.run_id, self.record)
+                    self.store.event(
+                        self.run_id, "tool_result", {"role": "execution", **call}
+                    )
             if result is not None:
                 return result
             if not retry or attempt == self.settings.search_retries:
@@ -140,7 +140,7 @@ class IQS:
         items = result.get("pageItems")
         if not isinstance(items, list):
             self.record["gaps"].append("搜索响应缺少有效资料列表。")
-            self.invalid_result()
+            self.finish_call("error")
             return
         for item in items[:5]:
             if (
@@ -169,10 +169,14 @@ class IQS:
                 }
             )
         self.record["provider_request_id"] = result.get("requestId")
+        self.finish_call(result_status(self.record))
 
-    def invalid_result(self) -> None:
+    def finish_call(self, status: str) -> None:
         call = self.record["calls"][-1]
-        call.update(status="error", error="invalid_result")
+        call["status"] = status
+        if status == "error":
+            call["error"] = "invalid_result"
+        self.store.research_record(self.run_id, self.record)
         self.store.event(self.run_id, "tool_result", {"role": "execution", **call})
 
     async def read_page(self, source: dict[str, Any]) -> None:
@@ -198,13 +202,14 @@ class IQS:
             or not data["text"].strip()
         ):
             self.record["gaps"].append(f"{source['id']} 正文读取失败，只保留搜索摘要。")
-            self.invalid_result()
+            self.finish_call("error")
             return
         source.update(
             body=data["text"][:10000],
             body_truncated=len(data["text"]) > 10000,
             material_type="body",
         )
+        self.finish_call("success")
 
 
 def result_status(record: dict[str, Any]) -> str:

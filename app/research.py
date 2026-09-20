@@ -88,6 +88,11 @@ async def research_learning(
         "calls": [],
         "gaps": [],
     }
+    store.event(
+        run_id,
+        "tool_call",
+        {"role": "main", "tool": "research_learning", "input": task.model_dump()},
+    )
     store.event(run_id, "role", {"role": "execution", "status": "processing"})
     executor = IQS(settings, store, run_id, record, transport)
     await executor.search(task.query)
@@ -96,9 +101,7 @@ async def research_learning(
             await executor.read_page(source)
     record["status"] = result_status(record)
     store.research_record(run_id, record)
-    store.event(
-        run_id, "tool_result", {"role": "execution", "tool": "iqs_search", **record}
-    )
+    store.event(run_id, "role", {"role": "execution", "status": record["status"]})
     store.event(run_id, "role", {"role": "main", "status": "processing"})
     if not record["sources"]:
         finish_research(store, run, local, record)
@@ -222,4 +225,5 @@ def finish_research(
         "completed" if record["status"] == "success" else "partial",
         reply,
         suggestions=suggestions,
+        tool="research_learning",
     )

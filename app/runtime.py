@@ -218,7 +218,9 @@ async def execute(
                     "\n".join(f"• {s['title']} [建议 {s['id']}]" for s in suggestions)
                     or "暂无行动建议。"
                 )
-                store.finish(run_id, "completed", reply, suggestions=suggestions)
+                store.finish(
+                    run_id, "completed", reply, suggestions=suggestions, tool=tool
+                )
                 return
             if tool == "accept_suggestion":
                 accepted = prepare_accept(

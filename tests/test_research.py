@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from datetime import UTC, datetime
 
 import httpx
@@ -345,3 +346,42 @@ def test_research_survives_app_restart_without_credentials(tmp_path):
             c, "搜索 Python 资料", "persisted", run["session_id"]
         )
         assert replay == run and replay_events == events
+
+
+def test_each_attempt_has_one_validated_result_and_no_phantom_plan_tool(tmp_path):
+    with research_client(tmp_path, [], search={"unexpected": True}) as c:
+        _, events = submit(c, "搜索 Python 资料")
+        results = [
+            json.loads(block.split("data: ")[1])
+            for block in events.split("\n\n")
+            if "event: tool_result\n" in block
+        ]
+        attempts = [r for r in results if "attempt" in r]
+        assert [r["status"] for r in attempts] == ["error"]
+        assert not any(r["tool"] == "plan_day" for r in results)
+
+
+def test_shutdown_finalizes_persisted_execution_status(tmp_path):
+    async def slow(request):
+        await asyncio.sleep(10)
+        return httpx.Response(200, json={"pageItems": []})
+
+    with research_client(tmp_path, [], search=slow) as c:
+        session = c.post("/api/sessions").json()["id"]
+        c.post(
+            f"/api/sessions/{session}/messages",
+            json={"request_id": "interrupt", "content": "搜索 Python 资料"},
+        )
+        for _ in range(100):
+            if c.get("/api/runs/interrupt").json()["research"].get("calls"):
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("search did not start")
+    with TestClient(
+        create_app(Settings(_env_file=None, db_path=tmp_path / "research.db"))
+    ) as c:
+        run = c.get("/api/runs/interrupt").json()
+        assert run["status"] == "failed"
+        assert run["research"]["status"] == "error"
+        assert all(call["status"] == "error" for call in run["research"]["calls"])

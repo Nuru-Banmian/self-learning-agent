@@ -512,8 +512,9 @@ class Store:
                     run_id,
                     "tool_result",
                     {
-                        "tool": "plan_day",
-                        "status": "success",
+                        "tool": tool,
+                        "role": "main",
+                        "status": "success" if status == "completed" else "partial",
                         "suggestions": suggestions,
                     },
                 )
@@ -530,6 +531,27 @@ class Store:
                 )
                 self._event(db, run_id, "saved", {"todo_ids": ids})
             memory = json.loads(run["memory"])
+            research = json.loads(run["research"])
+            if research and status == "failed":
+                research["status"] = "partial" if research["sources"] else "error"
+                research["gaps"].append("本轮已中断或失败，查询与学习安排未完成。")
+                for call in research["calls"]:
+                    if call["status"] == "running":
+                        call.update(status="error", error="interrupted")
+                        self._event(
+                            db, run_id, "tool_result", {"role": "execution", **call}
+                        )
+                db.execute(
+                    "UPDATE runs SET research=? WHERE id=?",
+                    (json.dumps(research, ensure_ascii=False), run_id),
+                )
+                self._event(db, run_id, "research", research)
+                if research["sources"]:
+                    status = "partial"
+                    reply += "\n\n已取得的外部资料保留：\n" + "\n".join(
+                        f"[{s['id']}] {s['title']} ({s['material_type']})\n{s['url']}\n{s['snippet']}"
+                        for s in research["sources"]
+                    )
             if status == "failed" and memory.get("saved_ids"):
                 status = "partial"
                 reply += "\n\n记忆已提交保存，但本轮其他处理未完成。"
