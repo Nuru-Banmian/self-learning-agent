@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -15,12 +16,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.runtime import execute
 from app.settings import Settings
 from app.store import Conflict, Store
+from app.todos import Action, overview
 
 
 class ChatInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     request_id: str = Field(min_length=1, max_length=100, pattern=r"^[\w-]+$")
     content: str = Field(min_length=1, max_length=8000)
+    action: Action | None = None
 
 
 def create_app(
@@ -69,7 +72,11 @@ def create_app(
         session(session_id)
         try:
             fresh = store.claim(
-                message.request_id, session_id, message.content, now().isoformat()
+                message.request_id,
+                session_id,
+                message.content,
+                now().isoformat(),
+                message.action.model_dump() if message.action else None,
             )
         except Conflict as exc:
             raise HTTPException(409, str(exc)) from None
@@ -80,6 +87,11 @@ def create_app(
             tasks.add(task)
             task.add_done_callback(tasks.discard)
         return get_run(message.request_id)
+
+    @app.get("/api/sessions/{session_id}/suggestions")
+    def suggestions(session_id: str) -> list[dict[str, Any]]:
+        session(session_id)
+        return store.suggestions(session_id)
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str) -> dict[str, Any]:
@@ -122,6 +134,12 @@ def create_app(
     @app.get("/api/todos")
     def todos() -> list[dict[str, Any]]:
         return store.todos()
+
+    @app.get("/api/todos/overview")
+    def todo_overview() -> dict[str, Any]:
+        return overview(
+            store.todos(), now().astimezone(ZoneInfo(config.user_timezone)).date()
+        )
 
     frontend = Path(__file__).resolve().parent.parent / "frontend" / "dist"
     if frontend.exists():
