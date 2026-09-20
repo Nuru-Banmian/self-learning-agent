@@ -191,6 +191,14 @@ def test_plan_uses_real_state_and_suggestion_requires_authorization_once(tmp_pat
             c.get(f"/api/sessions/{session}/suggestions").json()[0]["todo_id"]
             == todos[1]["id"]
         )
+        payload.update(
+            operation_response(
+                "accept_suggestion", {"suggestion_id": suggestions[1]["id"]}
+            )
+        )
+        ambiguous, events = submit(c, "加进去", "ambiguous-after-accept", session)
+        assert ambiguous["todo_ids"] == [] and "event: saved" not in events
+        assert c.get("/api/todos").json() == todos
 
 
 @pytest.mark.parametrize("tool", ["update_todo", "complete_todo", "accept_suggestion"])

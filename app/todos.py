@@ -92,10 +92,11 @@ def prepare_accept(
         if re.search(r"不要|不用|别|如果|假如|[?？]|吗|[“”\"「」]", text):
             raise Clarification("请明确要求加入哪一项建议，本次未新增。")
         if text in ("加进去", "加入待办"):
-            available = [s for s in suggestions if not s["todo_id"]]
-            if len(available) != 1:
+            # An already accepted suggestion remains a possible conversational
+            # referent; its write state cannot establish the user's new intent.
+            if len(suggestions) != 1:
                 raise Clarification("请指定一项建议的标题或标识，本次未新增。")
-            selected = available[0]
+            selected = suggestions[0]
         else:
             match = re.fullmatch(r"(?:把|将)(.+?)(?:加入待办|加进去)", text)
             if not match:

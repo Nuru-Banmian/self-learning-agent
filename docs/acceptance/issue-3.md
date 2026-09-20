@@ -23,6 +23,12 @@ TDD 记录：面板切片首次因不支持 action 返回 422；分组切片首�
 
 静态检查：mypy、Ruff、Ruff format、TypeScript/Vite 生产构建、`git diff --check` 通过。
 
+## 双轴审查
+
+- Standards：未发现硬性规范违规或需要修改的代码异味。
+- Spec：首轮发现一项 P2。两条建议中已接受一条后，“加进去”会按剩余未接受项自动选择，未充分处理歧义。公开接口回归测试先复现失败；修正为保留所有可能的建议目标，多项时必须明确标题或 ID，随后转绿。不存在因已接受状态而推定用户新意图的路径。
+- 修复后 Spec 独立复核无遗留问题，并运行维护测试 9 passed；最终全套再次运行 35 passed。Standards 0 项，Spec 1 项已修复、0 项遗留。
+
 ## 真实百炼：通过
 
 `python -m tests.live_maintenance` 使用本地后端配置、临时数据库及公开 HTTP/SSE。模型 `qwen3.7-plus-2026-05-26`，关闭深度思考，HTTP 客户端 `trust_env=False`。
