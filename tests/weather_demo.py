@@ -71,7 +71,7 @@ async def weather(request):
     if "/1.0/" in path:
         days = []
     elif "/34.05/" in path:
-        days = [forecast("2026-09-20T00:00-07:00", "2026-09-21T00:00-07:00")]
+        days = [forecast("2026-09-21T00:00-07:00", "2026-09-22T00:00-07:00")]
     return httpx.Response(
         200,
         json={

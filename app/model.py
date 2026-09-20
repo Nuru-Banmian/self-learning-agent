@@ -77,7 +77,7 @@ TOOLS = [
             "date_text": {
                 "type": ["string", "null"],
                 "description": "当前询问中的日期原文；使用待办安排日期时为null。"
-                "相对日期由应用按目的地时区解析",
+                "相对日期由应用按用户时区解析，再匹配目的地该日期的预报",
             },
             "todo_id": {
                 "type": ["string", "null"],

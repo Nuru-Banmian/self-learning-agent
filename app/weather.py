@@ -33,11 +33,19 @@ class WeatherTask(BaseModel):
 
 
 def explicit_weather(content: str) -> bool:
-    return "天气" in content and not re.search(
+    excluded = re.search(
         r"不要|不用|不需要|无需|别|记录|加入|修改|完成|删除|"
-        r"接口|API|原理|方法|收费|费用|怎么查|如何查|是什么|[‘’“”\"']",
+        r"接口|API|原理|方法|工具|收费|费用|怎么查|如何查|是什么|[‘’“”\"']",
         content,
         re.I,
+    )
+    return bool(
+        "天气" in content
+        and not excluded
+        and (
+            re.search(r"查|天气(?:怎么样|如何|怎样)|[？?]", content)
+            or (DATE_TOKEN.search(content) and content.rstrip().endswith("天气"))
+        )
     )
 
 
@@ -201,27 +209,58 @@ async def prepare_outing(
         {"role": "main", "tool": "prepare_outing", "input": task.model_dump()},
     )
     source = run["content"]
+    source_dates = DATE_TOKEN.findall(source)
+    date_text = source_dates[0] if len(source_dates) == 1 else None
+    todos = [t for t in store.todos() if t["status"] == "pending"]
     todo = next(
-        (
-            t
-            for t in store.todos()
-            if t["id"] == task.todo_id and t["status"] == "pending"
-        ),
+        (t for t in todos if t["id"] == task.todo_id),
         None,
     )
-    if task.todo_id and todo is None:
-        record["gaps"].append("请指定仍未完成的真实外出待办。")
+    if todo and todo["id"] not in source and todo["title"] not in source:
+        # Generic day plans may delegate the single scheduled outing for that day.
+        try:
+            plan_date = date_from_text(date_text or "今天", local.date())
+        except (ValueError, Clarification):
+            plan_date = None
+        outings = [
+            t
+            for t in todos
+            if t["scheduled_date"] == plan_date
+            and re.search(
+                r"去|前往|出门|外出|出差|旅行|旅游|参观|拜访|办事", t["title"]
+            )
+        ]
+        if not (
+            re.search(
+                r"(?:今天|明天|后天|当天).{0,8}(?:安排|计划|做什么|干什么|出行)", source
+            )
+            and len(outings) == 1
+            and outings[0]["id"] == todo["id"]
+        ):
+            todo = None
+    if (
+        todo
+        and todo["id"] not in source
+        and sum(t["title"] == todo["title"] for t in todos) > 1
+    ):
+        todo = None
+    if (
+        task.todo_id
+        and todo is None
+        and (not task.destination or task.destination not in source)
+    ):
+        record["gaps"].append("请明确本轮要查询的外出待办或目的地，不能使用无关待办。")
     if todo:
         source += " " + todo["title"]
     if not task.destination or task.destination not in source:
         record["gaps"].append(
             "请明确目的地城市及所在省/州、国家；不会根据记忆或定位猜测。"
         )
-    if task.date_text and DATE_TOKEN.findall(run["content"]) != [task.date_text]:
+    if len(source_dates) > 1 or (task.date_text and source_dates != [task.date_text]):
         record["gaps"].append(
             "请明确一个计划日期，并重新发送包含目的地和日期的完整询问。"
         )
-    elif not task.date_text and not (todo and todo["scheduled_date"]):
+    elif not date_text and not (todo and todo["scheduled_date"]):
         record["gaps"].append(
             "请明确一个计划日期，并重新发送包含目的地和日期的完整询问。"
         )
@@ -266,8 +305,8 @@ async def prepare_outing(
         destination_today = local.astimezone(ZoneInfo(location["tz"])).date()
         try:
             record["date"] = (
-                date_from_text(task.date_text, destination_today)
-                if task.date_text
+                date_from_text(date_text, local.date())
+                if date_text
                 else todo["scheduled_date"]
                 if todo
                 else None

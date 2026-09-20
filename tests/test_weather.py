@@ -115,6 +115,18 @@ def weather_app(
             return httpx.Response(
                 200, json={"choices": [{"message": {"content": '{"candidates": []}'}}]}
             )
+        if body["messages"][-1]["content"] in (
+            "今天天气真好",
+            "天气查询需要收费吗？",
+            "天气预报用什么工具查询？",
+        ):
+            return httpx.Response(
+                200,
+                json=operation_response(
+                    "answer_question",
+                    {"reply": "收到这条普通消息。", "memory_usage": []},
+                ),
+            )
         selected_task = task(body) if callable(task) else task
         return httpx.Response(
             200,
@@ -242,7 +254,7 @@ def test_existing_outing_date_is_preserved_and_weather_suggestions_require_accep
         assert len(todos) == 2 and todos[1]["scheduled_date"] == "2026-09-21"
 
 
-def test_relative_query_date_uses_destination_timezone_not_user_timezone(tmp_path):
+def test_user_relative_date_selects_same_calendar_day_in_destination_timezone(tmp_path):
     locations = [
         city(
             "洛杉矶",
@@ -255,13 +267,13 @@ def test_relative_query_date_uses_destination_timezone_not_user_timezone(tmp_pat
             adm2="洛杉矶",
         )
     ]
-    days = [forecast("2026-09-20T00:00-07:00", "2026-09-21T00:00-07:00")]
+    days = [forecast("2026-09-21T07:00Z", "2026-09-22T07:00Z")]
     task = {"destination": "洛杉矶", "date_text": "明天", "todo_id": None}
     with TestClient(
         weather_app(tmp_path, [], task=task, locations=locations, days=days)
     ) as c:
         run, _ = submit(c, "查询明天洛杉矶天气")
-        assert run["weather"]["date"] == "2026-09-20"
+        assert run["weather"]["date"] == "2026-09-21"
         assert run["weather"]["status"] == "success"
 
 
@@ -432,3 +444,95 @@ def test_explicit_weather_request_limits_main_to_readonly_weather_delegation(tmp
         "function": {"name": "prepare_outing"},
     }
     assert [t["function"]["name"] for t in main["tools"]] == ["prepare_outing"]
+
+
+@pytest.mark.parametrize(
+    "query,expected",
+    [
+        ("查询今天上海天气", "2026-09-20"),
+        ("查询明天北京天气", None),
+    ],
+)
+def test_model_cannot_override_current_destination_or_date_with_unrelated_todo(
+    tmp_path, query, expected
+):
+    target = {}
+    requests = []
+
+    def task(_):
+        return {"destination": "上海", "date_text": None, "todo_id": target["id"]}
+
+    with TestClient(
+        weather_app(
+            tmp_path,
+            requests,
+            task=task,
+            days=[forecast("2026-09-20T00:00+08:00", "2026-09-21T00:00+08:00")],
+        )
+    ) as c:
+        created, _ = submit(c, "请记录明天去上海办事", "setup")
+        target["id"] = created["todo_ids"][0]
+        run, _ = submit(c, query, "query")
+        if expected:
+            # The explicit destination/date is sufficient; discard an unrelated todo.
+            assert run["weather"]["date"] == expected
+            assert run["weather"]["forecast"]
+        else:
+            assert run["weather"]["status"] == "empty"
+            assert not [r for r in requests if r.method == "GET"]
+
+
+@pytest.mark.parametrize(
+    "content", ["今天天气真好", "天气查询需要收费吗？", "天气预报用什么工具查询？"]
+)
+def test_weather_statements_and_service_questions_are_not_forced_to_forecast(
+    tmp_path, content
+):
+    requests = []
+    with TestClient(weather_app(tmp_path, requests)) as c:
+        run, _ = submit(c, content)
+        assert run["status"] == "completed"
+        assert not run["weather"]
+        assert not [r for r in requests if r.method == "GET"]
+
+
+def test_day_plan_delegates_the_single_outing_on_requested_day(tmp_path):
+    target = {}
+
+    def task(_):
+        return {"destination": "上海", "date_text": None, "todo_id": target["id"]}
+
+    with TestClient(weather_app(tmp_path, [], task=task)) as c:
+        created, _ = submit(c, "请记录明天去上海办事", "setup")
+        target["id"] = created["todo_ids"][0]
+        run, _ = submit(c, "明天出行安排要准备什么？", "plan")
+        assert run["weather"]["status"] == "success"
+        assert len(c.get("/api/todos").json()) == 1
+
+
+def test_shutdown_preserves_location_and_closes_weather_attempt(tmp_path):
+    async def slow(request):
+        await asyncio.sleep(10)
+        return httpx.Response(200, json={})
+
+    with TestClient(weather_app(tmp_path, [], weather=slow)) as c:
+        session = c.post("/api/sessions").json()["id"]
+        c.post(
+            f"/api/sessions/{session}/messages",
+            json={"request_id": "interrupted", "content": "查询明天上海天气"},
+        )
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            running = c.get("/api/runs/interrupted").json()
+            if len(running.get("weather", {}).get("calls", [])) == 2:
+                break
+            time.sleep(0.01)
+        assert running["weather"]["location"]["name"] == "上海"
+    with TestClient(
+        create_app(Settings(_env_file=None, db_path=tmp_path / "weather.db"))
+    ) as c:
+        run = c.get("/api/runs/interrupted").json()
+        assert run["status"] == "partial"
+        assert run["weather"]["status"] == "partial"
+        assert all(call["status"] != "running" for call in run["weather"]["calls"])
+        assert "event: terminal" in c.get("/api/runs/interrupted/events").text
