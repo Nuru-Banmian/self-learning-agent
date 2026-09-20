@@ -29,6 +29,7 @@ from app.todos import (
     prepare_todos,
     render_overview,
 )
+from app.weather import explicit_weather, finish_weather, prepare_outing
 
 
 async def execute(
@@ -107,7 +108,11 @@ async def execute(
             store.memory_record(run_id, loaded=loaded, usage=[], effect_verified=False)
             store.event(run_id, "role", {"role": "main", "status": "processing"})
             required_tool = (
-                "research_learning" if explicit_search(run["content"]) else None
+                "prepare_outing"
+                if explicit_weather(run["content"])
+                else "research_learning"
+                if explicit_search(run["content"])
+                else None
             )
             response = await call_model(
                 settings,
@@ -118,6 +123,9 @@ async def execute(
                         "role": "system",
                         "content": (
                             "你是生活助理的主 Agent。"
+                            "查询天气或外出准备时调用prepare_outing取得真实预报，不凭模型知识回答天气。"
+                            "当天计划含外出待办时按需调用prepare_outing，地点缺失也调用并传null以追问。"
+                            "不要根据居住记忆或定位猜测目的地。相对日期保留用户原文。"
                             "查找资料并给练习要调用research_learning，不是create_todos。"
                             "查询与建议中的‘给我’不代表记录授权。"
                             "仅明确安排/记录指令才调用 create_todos。"
@@ -179,7 +187,7 @@ async def execute(
             function = calls[0]["function"]
             tool = function["name"]
             if required_tool and tool != required_tool:
-                raise ModelError("未能生成有效搜索查询，请重试；待办未修改。")
+                raise ModelError("未能生成有效信息查询，请重试；待办未修改。")
             arguments = json.loads(function["arguments"])
             if not isinstance(arguments, dict):
                 raise ValueError("模型操作参数无效，未修改待办。")
@@ -187,6 +195,9 @@ async def execute(
                 await research_learning(
                     store, settings, run, local, loaded, revision, arguments, transport
                 )
+                return
+            if tool == "prepare_outing":
+                await prepare_outing(store, settings, run, local, arguments, transport)
                 return
             if tool == "answer_question":
                 answer = Answer.model_validate(arguments)
@@ -268,7 +279,12 @@ async def execute(
         store.finish(run_id, "failed", str(exc), error="validation_or_model")
     except TimeoutError:
         current = store.run(run_id)
-        if current and current["research"]:
+        if current and current["weather"]:
+            record = current["weather"]
+            record["gaps"].append("整轮处理超时，已有地点及有效信息保留。")
+            record["status"] = "partial" if record["location"] else "error"
+            finish_weather(store, run, local, record)
+        elif current and current["research"]:
             record = current["research"]
             record["gaps"].append("整轮处理超时，未完成查询或学习安排；已有资料保留。")
             record["status"] = "partial" if record["sources"] else "error"

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
+import { WeatherPanel, type WeatherEvidence } from "./WeatherPanel";
 
 type Message = { id: string; role: string; content: string };
 type Todo = {
@@ -36,6 +37,7 @@ type Run = {
   todo_ids: string[];
   memory: MemoryEvidence;
   research: ResearchEvidence;
+  weather: WeatherEvidence;
 };
 type ResearchEvidence = {
   status?: string;
@@ -487,6 +489,7 @@ function App() {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [evidence, setEvidence] = useState<MemoryEvidence | null>(null);
   const [research, setResearch] = useState<ResearchEvidence | null>(null);
+  const [weather, setWeather] = useState<WeatherEvidence | null>(null);
   const stream = useRef<EventSource | null>(null);
 
   async function refresh(id: string) {
@@ -507,9 +510,11 @@ function App() {
       const latest = await api<Run>(`/runs/${data.latest_run_id}`);
       setEvidence(latest.memory);
       setResearch(latest.research);
+      setWeather(latest.weather);
     } else {
       setEvidence(null);
       setResearch(null);
+      setWeather(null);
     }
   }
 
@@ -523,6 +528,7 @@ function App() {
     setSavedCount(null);
     setEvidence(null);
     setResearch(null);
+    setWeather(null);
     setMemories(await api<Memory[]>("/memories"));
     return created.id;
   }
@@ -554,7 +560,7 @@ function App() {
         data.role === "learning"
           ? "学习 Agent 正在整理记忆"
           : data.role === "execution"
-            ? "执行 Agent 正在查询资料"
+            ? "执行 Agent 正在查询外部信息"
             : "主 Agent 正在处理",
       );
     });
@@ -569,7 +575,11 @@ function App() {
       const data = JSON.parse((event as MessageEvent).data);
       setPhase(
         data.role === "execution"
-          ? data.tool === "iqs_read_page"
+          ? data.tool === "qweather_city"
+            ? "执行 Agent 正在确认目的地"
+            : data.tool === "qweather_daily"
+              ? "执行 Agent 正在查询天气"
+              : data.tool === "iqs_read_page"
             ? "执行 Agent 正在读取正文"
             : "执行 Agent 正在搜索"
           : "正在处理待办或计划",
@@ -577,6 +587,9 @@ function App() {
     });
     events.addEventListener("research", (event) =>
       setResearch(JSON.parse((event as MessageEvent).data)),
+    );
+    events.addEventListener("weather", (event) =>
+      setWeather(JSON.parse((event as MessageEvent).data)),
     );
     events.addEventListener("saved", () => setPhase("保存已提交，正在读回"));
     events.addEventListener("terminal", () => {
@@ -761,6 +774,7 @@ function App() {
             </div>
           </form>
           <ResearchPanel research={research} />
+          <WeatherPanel weather={weather} />
           <section className="suggestions" aria-label="行动建议">
             <div className="panel-head">
               <h2>当天计划与行动建议</h2>

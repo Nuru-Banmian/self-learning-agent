@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -14,6 +15,12 @@ class Settings(BaseSettings):
     iqs_api_key: SecretStr = SecretStr("")
     iqs_engine: str = "Generic"
     iqs_enhanced_summary: bool = False
+    qweather_api_key: SecretStr = SecretStr("")
+    qweather_api_host: str = ""
+    weather_timeout_seconds: float = Field(default=12, gt=0, le=60)
+    max_weather_calls: int = Field(default=4, ge=1, le=6)
+    weather_retries: int = Field(default=1, ge=0, le=2)
+    weather_forecast_days: int = Field(default=7, ge=1, le=10)
     search_timeout_seconds: float = Field(default=12, gt=0, le=60)
     max_search_calls: int = Field(default=4, ge=1, le=6)
     search_retries: int = Field(default=1, ge=0, le=2)
@@ -27,4 +34,12 @@ class Settings(BaseSettings):
     @classmethod
     def valid_timezone(cls, value: str) -> str:
         ZoneInfo(value)
+        return value
+
+    @field_validator("qweather_api_host")
+    @classmethod
+    def valid_weather_host(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value and not re.fullmatch(r"[a-z0-9-]+\.qweatherapi\.com", value):
+            raise ValueError("和风 API Host 须为账户专属的 *.qweatherapi.com 域名")
         return value
