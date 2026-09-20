@@ -1,6 +1,94 @@
 """Conservative source and scope rules shared by extraction and persistence."""
 
 import re
+from datetime import datetime, time, timedelta
+from typing import Any
+
+
+def topic_matches(topic: str, content: str) -> bool:
+    terms = re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", topic.casefold())
+    return any(
+        term in content.casefold()
+        or (
+            re.fullmatch(r"[\u4e00-\u9fff]+", term)
+            and any(term[i : i + 2] in content for i in range(len(term) - 1))
+        )
+        for term in terms
+    )
+
+
+def overlaps(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    return (
+        all(left[k] == right[k] for k in ("category", "scope", "task_id"))
+        and (
+            left["expires_at"] is None
+            or datetime.fromisoformat(left["expires_at"])
+            > datetime.fromisoformat(right["valid_from"])
+        )
+        and (
+            right["expires_at"] is None
+            or datetime.fromisoformat(right["expires_at"])
+            > datetime.fromisoformat(left["valid_from"])
+        )
+        and (
+            topic_matches(left["topic"], right["content"])
+            or topic_matches(right["topic"], left["content"])
+            or (
+                fact_attribute(left["content"]) is not None
+                and fact_attribute(left["content"]) == fact_attribute(right["content"])
+            )
+            or (
+                general_time_condition(left["content"])
+                and general_time_condition(right["content"])
+            )
+        )
+    )
+
+
+def validate_memory(
+    candidate: dict[str, Any], local: datetime, todos: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """One scope/expiry policy for learning, explicit corrections and panel edits."""
+    content = candidate["content"]
+    category = category_of(content)
+    if (
+        source_clauses(content) != [content]
+        or category is None
+        or candidate["category"] != category
+        or candidate["topic"] not in content
+    ):
+        return None
+    start, end = local, None
+    if category == "condition":
+        targets = [t for t in todos if t["title"] in content]
+        if candidate["scope"] == "task":
+            if (
+                len(targets) != 1
+                or targets[0]["id"] != candidate["task_id"]
+                or targets[0]["status"] != "pending"
+            ):
+                return None
+        elif targets or candidate["task_id"] or not general_time_condition(content):
+            return None
+        if "今天" in content or "明天" in content:
+            validity = "today" if "今天" in content else "tomorrow"
+            if candidate["validity"] != validity:
+                return None
+            day = local.date() + timedelta(days=validity == "tomorrow")
+            start = datetime.combine(day, time(), local.tzinfo)
+            end = datetime.combine(day + timedelta(days=1), time(), local.tzinfo)
+        elif candidate["scope"] != "task" or candidate["validity"] != "task":
+            return None
+    elif (
+        candidate["scope"] != "general"
+        or candidate["task_id"]
+        or candidate["validity"] != "ongoing"
+    ):
+        return None
+    return candidate | {
+        "valid_from": start.isoformat(),
+        "expires_at": end.isoformat() if end else None,
+    }
 
 
 def general_time_condition(content: str) -> bool:

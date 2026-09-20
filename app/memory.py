@@ -2,13 +2,13 @@
 
 import json
 import re
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from typing import Any, Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.memory_policy import category_of, general_time_condition, source_clauses
+from app.memory_policy import category_of, source_clauses, validate_memory
 from app.model import call_model
 from app.settings import Settings
 from app.store import Store
@@ -57,10 +57,26 @@ def active(memory: dict[str, Any], now: datetime, todos: list[dict[str, Any]]) -
 def select_memories(store: Store, query: str, now: datetime) -> list[dict[str, Any]]:
     selected: list[dict[str, Any]] = []
     todos = store.todos()
-    for memory in reversed(store.memories()):
+    memories = store.memories()
+    task_exceptions = [
+        m
+        for m in memories
+        if m["scope"] == "task"
+        and active(m, now, todos)
+        and any(
+            t["id"] == m["task_id"] and (t["id"] in query or t["title"] in query)
+            for t in todos
+        )
+    ]
+    for memory in sorted(memories, key=lambda m: m["scope"] == "task", reverse=True):
         if not active(memory, now, todos):
             continue
         if memory["category"] == "preference" and re.search(r"这次|本次", query):
+            continue
+        if memory["category"] == "preference" and any(
+            m["topic"] in memory["content"] or memory["topic"] in m["content"]
+            for m in task_exceptions
+        ):
             continue
         if memory["scope"] == "task" and not any(
             t["id"] == memory["task_id"] and (t["id"] in query or t["title"] in query)
@@ -122,11 +138,15 @@ async def learn(
     local: datetime,
     transport: httpx.AsyncBaseTransport | None,
 ) -> None:
+    if store.source_processed(run["message_id"]):
+        store.memory_record(run["id"], learning="empty")
+        return
     clauses = source_clauses(run["content"])
     if not any(category_of(clause) for clause in clauses):
         store.memory_record(run["id"], learning="empty")
         return
     store.event(run["id"], "role", {"role": "learning", "status": "processing"})
+    revision = store.memory_revision()
     response = await call_model(
         settings,
         store,
@@ -191,48 +211,9 @@ async def learn(
         ):
             rejected += 1
             continue
-        start = local
-        end = None
-        if category == "condition":
-            targets = [t for t in store.todos() if t["title"] in candidate.content]
-            if candidate.scope == "task":
-                if (
-                    len(targets) != 1
-                    or targets[0]["id"] != candidate.task_id
-                    or targets[0]["status"] != "pending"
-                ):
-                    rejected += 1
-                    continue
-            elif (
-                targets
-                or candidate.task_id
-                or not general_time_condition(candidate.content)
-            ):
-                rejected += 1
-                continue
-            if "今天" in candidate.content or "明天" in candidate.content:
-                validity = "today" if "今天" in candidate.content else "tomorrow"
-                if candidate.validity != validity:
-                    rejected += 1
-                    continue
-                day = local.date() + timedelta(days=validity == "tomorrow")
-                start = datetime.combine(day, time(), local.tzinfo)
-                end = datetime.combine(day + timedelta(days=1), time(), local.tzinfo)
-            elif candidate.scope != "task" or candidate.validity != "task":
-                rejected += 1
-                continue
-        elif (
-            candidate.scope != "general"
-            or candidate.task_id
-            or candidate.validity != "ongoing"
-        ):
+        value = validate_memory(candidate.model_dump(), local, store.todos())
+        if value is None:
             rejected += 1
             continue
-        valid.append(
-            candidate.model_dump()
-            | {
-                "valid_from": start.isoformat(),
-                "expires_at": end.isoformat() if end else None,
-            }
-        )
-    store.save_memories(run["id"], valid, rejected)
+        valid.append(value)
+    store.save_memories(run["id"], valid, rejected, revision)

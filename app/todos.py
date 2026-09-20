@@ -52,7 +52,14 @@ def render_overview(data: dict[str, Any]) -> str:
 
 class Action(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    tool: Literal["update_todo", "complete_todo", "accept_suggestion"]
+    tool: Literal[
+        "update_todo",
+        "complete_todo",
+        "accept_suggestion",
+        "update_memory",
+        "delete_memory",
+        "reprocess_memory",
+    ]
     arguments: dict[str, Any]
 
 
