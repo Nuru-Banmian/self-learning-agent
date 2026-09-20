@@ -58,3 +58,7 @@ Standards 初审：0 项硬性违反、0 项需修复 smell。Spec 初审：3 �
 最终实现提交 d9a016b：全量 pytest **157 passed**（43.08 秒，2 条既有 Starlette/httpx/anyio 弃用警告）；天气专用 **34 passed**；mypy（13 个源码文件）、Ruff、format（29 文件）、git diff --check 通过；前端 TypeScript/Vite build 通过。前一版完整回归为 156 passed（43.05 秒），不能代替最后一次结果。只提交本地 main，未推送、未关闭 Issue。
 
 审查汇总：Standards 0 项；Spec 0 项剩余代码问题。必要的真实和风与大陆网络验收保持未完成。
+
+## 后续发布授权
+
+用户随后明确要求“上传 PR 合并然后关闭”，授权推送、创建并合并 PR，以及关闭 Issue #7。以上“仅本地提交/不关闭 Issue”是实现阶段的历史边界，本次发布以新授权为准。关闭 Issue 不表示缺少凭据的真实和风或大陆网络验收已经通过；这些未完成项继续保留在本记录中。
