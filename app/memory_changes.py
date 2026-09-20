@@ -6,13 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.memory_policy import (
-    category_of,
-    fact_attribute,
-    general_time_condition,
-    topic_matches,
-    validate_memory,
-)
+from app.memory_policy import category_of, same_subject, subject_topic, validate_memory
 from app.todos import Clarification
 
 
@@ -105,16 +99,13 @@ def chat_memory_change(
                 .date()
                 == local.date() + timedelta(days="明天" in new_content)
             )
-            and (
-                (
-                    fact_attribute(new_content) is not None
-                    and fact_attribute(new_content) == fact_attribute(m["content"])
-                )
-                or topic_matches(m["topic"], new_content)
-                or (
-                    general_time_condition(new_content)
-                    and general_time_condition(m["content"])
-                )
+            and same_subject(
+                m,
+                {
+                    "content": new_content,
+                    "topic": subject_topic(new_content),
+                    "category": category,
+                },
             )
         ]
     if len(targets) != 1:
@@ -132,7 +123,9 @@ def chat_memory_change(
     topic = (
         old["topic"]
         if old["topic"] in new_content
-        else re.sub(r"^我(?:住在|居住在|从事|工作是|是)", "", new_content)[:30]
+        else subject_topic(
+            re.sub(r"^我(?:住在|居住在|从事|工作是|是)", "", new_content)
+        )[:30]
     )
     validity = (
         "today"

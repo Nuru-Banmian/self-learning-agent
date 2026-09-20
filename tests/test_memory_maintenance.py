@@ -77,6 +77,11 @@ def test_correction_matches_same_subject_with_different_topic_wording(tmp_path):
         assert [m["content"] for m in c.get("/api/memories").json()] == [
             "我喜欢视频资料"
         ]
+        before = c.get("/api/memories").json()
+        unrelated, events = submit(c, "更正：我喜欢清淡食物", "unrelated-correction")
+        assert "未修改" in unrelated["reply"]
+        assert "event: memory_updated" not in events
+        assert c.get("/api/memories").json() == before
 
 
 def test_correction_of_today_condition_does_not_replace_tomorrow(tmp_path):
@@ -194,8 +199,10 @@ def test_clear_chat_correction_replaces_same_scope_with_traceable_source(tmp_pat
         assert [m["content"] for m in later["memory"]["loaded"]] == ["我住在上海"]
 
 
+@pytest.mark.parametrize("specific_topics", [False, True])
 def test_saved_task_exception_takes_priority_without_replacing_general_preference(
     tmp_path,
+    specific_topics,
 ):
     def extract(source):
         if source["content"].startswith("本次"):
@@ -206,9 +213,10 @@ def test_saved_task_exception_takes_priority_without_replacing_general_preferenc
                     scope="task",
                     task_id=source["tasks"][0]["id"],
                     validity="task",
+                    topic="视频资料" if specific_topics else "资料",
                 )
             ]
-        return [candidate(source)]
+        return [candidate(source, topic="官方资料" if specific_topics else "资料")]
 
     with memory_client(tmp_path, extract=extract) as c:
         submit(c, "我喜欢优先阅读官方资料")

@@ -8,7 +8,13 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.memory_policy import category_of, source_clauses, validate_memory
+from app.memory_policy import (
+    category_of,
+    same_subject,
+    source_clauses,
+    topic_matches,
+    validate_memory,
+)
 from app.model import call_model
 from app.settings import Settings
 from app.store import Store
@@ -74,8 +80,7 @@ def select_memories(store: Store, query: str, now: datetime) -> list[dict[str, A
         if memory["category"] == "preference" and re.search(r"这次|本次", query):
             continue
         if memory["category"] == "preference" and any(
-            m["topic"] in memory["content"] or memory["topic"] in m["content"]
-            for m in task_exceptions
+            same_subject(m, memory) for m in task_exceptions
         ):
             continue
         if memory["scope"] == "task" and not any(
@@ -83,16 +88,7 @@ def select_memories(store: Store, query: str, now: datetime) -> list[dict[str, A
             for t in todos
         ):
             continue
-        topic = memory["topic"].casefold()
-        topic_terms = re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", topic)
-        relevant = any(
-            term in query.casefold()
-            or (
-                re.fullmatch(r"[\u4e00-\u9fff]+", term)
-                and any(term[i : i + 2] in query for i in range(len(term) - 1))
-            )
-            for term in topic_terms
-        )
+        relevant = topic_matches(memory["topic"], query)
         if not relevant and not (
             memory["category"] == "condition"
             and any(w in query for w in ("今天", "计划", "安排"))

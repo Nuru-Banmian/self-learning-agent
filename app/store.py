@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from app.memory_policy import fact_attribute, overlaps
+from app.memory_policy import overlaps
 from app.todos import Clarification
 
 
@@ -213,21 +213,8 @@ class Store:
                 ]
                 if any(p["content"] == c["content"] for p in previous):
                     continue
-                # Conservatively quarantine overlapping topics, rather than silently
-                # replacing a preference; explicit correction belongs to Issue #5.
-                overlap = [
-                    p
-                    for p in previous
-                    if (
-                        p["topic"] in c["content"]
-                        or c["topic"] in p["content"]
-                        or (
-                            fact_attribute(c["content"]) is not None
-                            and fact_attribute(c["content"])
-                            == fact_attribute(p["content"])
-                        )
-                    )
-                ]
+                # Ambiguous ordinary assertions pause conflicting same-scope facts.
+                overlap = [p for p in previous if overlaps(dict(p), c)]
                 state = "conflict" if overlap else "active"
                 for p in overlap:
                     db.execute(

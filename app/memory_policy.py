@@ -5,8 +5,37 @@ from datetime import datetime, time, timedelta
 from typing import Any
 
 
+def subject_topic(text: str) -> str:
+    # Assertion grammar is not evidence that two facts share a subject.
+    return re.sub(
+        r"^(?:(?:我|以后|更|通常|一般|一直|比较|不喜欢|喜欢|偏好|习惯|优先|不爱|倾向|阅读|观看|看|正在学习|在学)\s*)+",
+        "",
+        text,
+    ).strip()
+
+
+def same_subject(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    left_attribute = fact_attribute(left["content"])
+    right_attribute = fact_attribute(right["content"])
+    if left_attribute or right_attribute:
+        return left_attribute == right_attribute
+    if general_time_condition(left["content"]) and general_time_condition(
+        right["content"]
+    ):
+        return True
+    a, b = subject_topic(left["topic"]), subject_topic(right["topic"])
+    if not a or not b:
+        return False
+    if a in right["content"] or b in left["content"]:
+        return True
+    # Background identifiers (e.g. 主题1 vs 主题2) must not merge on a shared stem.
+    if left["category"] == right["category"] == "background":
+        return False
+    return topic_matches(a, b) or topic_matches(b, a)
+
+
 def topic_matches(topic: str, content: str) -> bool:
-    terms = re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", topic.casefold())
+    terms = re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", subject_topic(topic).casefold())
     return any(
         term in content.casefold()
         or (
@@ -30,18 +59,7 @@ def overlaps(left: dict[str, Any], right: dict[str, Any]) -> bool:
             or datetime.fromisoformat(right["expires_at"])
             > datetime.fromisoformat(left["valid_from"])
         )
-        and (
-            topic_matches(left["topic"], right["content"])
-            or topic_matches(right["topic"], left["content"])
-            or (
-                fact_attribute(left["content"]) is not None
-                and fact_attribute(left["content"]) == fact_attribute(right["content"])
-            )
-            or (
-                general_time_condition(left["content"])
-                and general_time_condition(right["content"])
-            )
-        )
+        and same_subject(left, right)
     )
 
 
