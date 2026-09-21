@@ -168,7 +168,7 @@ def test_linked_content_requires_sync_and_refusal_keeps_entire_proposal_pending(
         route = accepted["roadmap"]
         args = revision_args(route)
         args["nodes"][0]["todo_title"] = route["nodes"][0]["todo_title"]
-        args["nodes"][1]["scheduled_date"] = "2026-10-02"
+        args["nodes"][1]["exercise"] = "观察 TTL 倒计时并记录过期结果"
         preview, _ = action(c, session, "preview", "preview_roadmap_revision", args)
         proposal = preview["roadmap"]["revision_proposals"][0]
         todo_id = route["nodes"][0]["todo_id"]
@@ -189,7 +189,10 @@ def test_linked_content_requires_sync_and_refusal_keeps_entire_proposal_pending(
         confirm["sync_todo_ids"] = [todo_id]
         done, _ = action(c, session, "confirm", "confirm_roadmap_revision", confirm)
         assert done["roadmap"]["nodes"][0]["todo_id"] == todo_id
-        assert done["roadmap"]["nodes"][1]["scheduled_date"] == "2026-10-02"
+        assert (
+            done["roadmap"]["nodes"][1]["exercise"] == "观察 TTL 倒计时并记录过期结果"
+        )
+        assert done["roadmap"]["nodes"][1]["scheduled_date"] is None
         assert c.get("/api/todos").json() == todos
 
 
@@ -240,11 +243,10 @@ def test_completed_content_protected_and_replacement_keeps_history_links(tmp_pat
 
 
 @pytest.mark.parametrize(
-    "change", ["accept", "complete", "edit", "schedule", "revision"]
+    "change", ["accept", "complete", "edit", "manual_date", "revision"]
 )
 def test_another_session_invalidates_old_proposal_without_overwriting(change, tmp_path):
     from tests.test_roadmap_progress import target
-    from tests.test_roadmap_schedule import preview_args
 
     with roadmap_client(tmp_path, []) as c:
         generated, _ = submit(c, REQUEST)
@@ -272,22 +274,15 @@ def test_another_session_invalidates_old_proposal_without_overwriting(change, tm
                     "date_text": "2026-10-04",
                 },
             )
-        elif change == "schedule":
-            p, _ = action(
-                c,
-                other,
-                "other-preview",
-                "preview_roadmap_schedule",
-                preview_args(route),
-            )
+        elif change == "manual_date":
             action(
                 c,
                 other,
                 "change",
-                "confirm_roadmap_schedule",
+                "update_todo",
                 {
-                    "roadmap_id": route["id"],
-                    "proposal_id": p["roadmap"]["schedule_proposals"][0]["id"],
+                    "todo_id": route["nodes"][0]["todo_id"],
+                    "date_text": "2026-10-04",
                 },
             )
         else:
@@ -328,7 +323,7 @@ def test_another_session_invalidates_old_proposal_without_overwriting(change, tm
         assert c.get("/api/todos").json() == todos
 
 
-def test_atomic_rollback_and_explicit_retry_with_linked_date_title_changes(tmp_path):
+def test_atomic_rollback_and_explicit_retry_preserves_manual_date(tmp_path):
     import sqlite3
 
     from tests.test_roadmap_progress import target
@@ -338,8 +333,15 @@ def test_atomic_rollback_and_explicit_retry_with_linked_date_title_changes(tmp_p
         route, session = generated["roadmap"], generated["session_id"]
         accepted, _ = action(c, session, "accept", "accept_roadmap_node", target(route))
         route = accepted["roadmap"]
+        action(
+            c,
+            session,
+            "manual-date",
+            "update_todo",
+            {"todo_id": route["nodes"][0]["todo_id"], "date_text": "2026-10-03"},
+        )
+        route = c.get(f"/api/roadmaps/{route['id']}").json()
         args = revision_args(route)
-        args["nodes"][0]["scheduled_date"] = "2026-10-03"
         preview, _ = action(c, session, "preview", "preview_roadmap_revision", args)
         p = preview["roadmap"]["revision_proposals"][0]
         before = c.get(f"/api/roadmaps/{route['id']}").json()
@@ -435,8 +437,15 @@ def test_revision_survives_real_process_death(tmp_path, after_commit, operation)
         route, session = generated["roadmap"], generated["session_id"]
         accepted, _ = action(c, session, "accept", "accept_roadmap_node", target(route))
         route = accepted["roadmap"]
+        action(
+            c,
+            session,
+            "manual-date",
+            "update_todo",
+            {"todo_id": route["nodes"][0]["todo_id"], "date_text": "2026-10-01"},
+        )
+        route = c.get(f"/api/roadmaps/{route['id']}").json()
         args = revision_args(route)
-        args["nodes"][0]["scheduled_date"] = "2026-10-01"
         if operation == "confirm":
             preview, _ = action(c, session, "preview", "preview_roadmap_revision", args)
             args = {
@@ -454,7 +463,7 @@ def test_revision_survives_real_process_death(tmp_path, after_commit, operation)
             ).raise_for_status()
         body = {
             "request_id": "schedule",
-            "content": "面板排期操作",
+            "content": "面板内容调整操作",
             "action": {"tool": f"{operation}_roadmap_revision", "arguments": args},
         }
         c.post(f"/api/sessions/{session}/messages", json=body).raise_for_status()
@@ -469,7 +478,7 @@ def test_revision_survives_real_process_death(tmp_path, after_commit, operation)
                     if line == f"event: {event_name}":
                         break
                 else:
-                    raise AssertionError("missing committed scheduling event")
+                    raise AssertionError("missing committed revision event")
         else:
             assert c.get("/api/runs/schedule").json()["status"] == "queued"
         process.kill()
@@ -491,9 +500,7 @@ def test_revision_survives_real_process_death(tmp_path, after_commit, operation)
         assert done["roadmap"]["revision_proposals"][0]["status"] == (
             "pending" if operation == "preview" else "applied"
         )
-        assert c.get("/api/todos").json()[0]["scheduled_date"] == (
-            "2026-10-01" if operation == "confirm" else None
-        )
+        assert c.get("/api/todos").json()[0]["scheduled_date"] == "2026-10-01"
         saved = next(e for e in done["events"] if e["kind"] == event_name)
         remaining = c.get(
             f"/api/runs/{done['id']}/events",

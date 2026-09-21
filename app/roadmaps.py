@@ -138,6 +138,26 @@ def chat_batch_selection(store: Store, content: str) -> NodesSelection | None:
             "路线或节点目标不明确，未新增。请在路线面板全选或勾选部分节点后确认；"
             "也可说‘把路线 完整标识 全部加入待办’。"
         )
+    for clause in re.split(r"[，,。；;！？!?\n]", unquoted_request(content)):
+        # A negated join must not consume a separate ordinary todo request.
+        text = re.sub(r"(?:不要|不用|不需要|不必|无需|别|暂不).*", "", clause)
+        node_reference = re.search(
+            r"(?:(?:这条|该)路线|第[一二三四五六七八\d]+个?节点)", text
+        )
+        if node_reference and (
+            re.search(r"加入待办|加进去", text)
+            or (
+                "节点" in text
+                and (
+                    re.search(r"添加|新增|安排", text)
+                    or re.search(r"记录.*节点(?:[。！!]|$)", text)
+                )
+            )
+        ):
+            raise Clarification(
+                "请在路线面板选择节点后确认，或提供节点完整标识；"
+                "新加入的节点待办不安排日期。"
+            )
     return None
 
 
@@ -212,10 +232,13 @@ async def compose_roadmap(
                     "多轮需求按时间先后排列，后续纠正覆盖旧信息；"
                     "learning_constraints是本轮核对后的需求约束。"
                     "节点数依学习目标决定，1至8个，每个节点只有一项具体可执行练习和一条候选待办。"
-                    "按先修顺序安排，结合用户基础、目标、每次可投入时间估计分钟数，耗时是估计。"
+                    "按先修顺序安排，结合用户基础和目标估计练习耗时；"
+                    "按用户自己的节奏推进，不要求时间预算、频率或起止日期。"
                     "每个节点引用实际来源ID，不生成URL，不声称已读全文、已完成练习或已加入待办。"
                     "不能只重复学习主题；完成标准必须可检查。不要安排日期。"
                     "第一步明确需要准备的运行环境、服务与依赖，不能假定用户已有。"
+                    "练习导入第三方库时，在首次使用前给出安装命令，"
+                    "例如import redis前先执行python -m pip install redis。"
                     "环境准备只给一种可行路径并写出启动与验证命令，"
                     "若服务在容器中，验证命令也在容器中执行，不假定宿主机有CLI。"
                     "使用Docker前说明需安装并启动Docker，不能直接假定docker命令可用。"
@@ -232,8 +255,14 @@ async def compose_roadmap(
                     "检查倒计时只要求合理范围，不保证调度耗时小于一秒。"
                     "TTL可以等于设置的初始秒数，不要求严格小于初值，"
                     "也不要求两次独立读取的TTL相等；测试过期时不能重新SET重置倒计时。"
+                    "跨节点使用同一个缓存键时，逐次跟踪首次写入值、TTL和后续命中；"
+                    "cache-aside命中分支传入的新ttl不会更新已有键。"
+                    "等待过期的示例必须在等待前明确写入短TTL，"
+                    "使用独立测试键或先清理该练习键，不能让旧长TTL导致预期失效。"
                     "每段代码明确在同一解释器继续还是新建/替换脚本；"
                     "新进程不能引用上一进程的局部变量。追加代码后核对完整脚本的所有输出，"
+                    "新建脚本调用前序函数时必须给出确切import或完整定义，"
+                    "导入示例模块还需避免其顶层演示代码额外输出。"
                     "不要把追加片段的输出说成整个脚本的唯一输出。"
                     "未指定操作系统时用Python创建练习输入文件，"
                     "避免依赖echo -e、grep等特定Shell命令。"

@@ -9,7 +9,7 @@ from tests.test_roadmap_schedule import preview_args
 from tests.test_roadmaps import roadmap_client
 
 
-def test_memory_clarification_selection_schedule_completion_revision_and_restart(
+def test_memory_clarification_selection_manual_date_completion_revision_and_restart(
     tmp_path,
 ):
     requests = []
@@ -49,27 +49,23 @@ def test_memory_clarification_selection_schedule_completion_revision_and_restart
             c, session, "schedule", "preview_roadmap_schedule", preview_args(route)
         )
         assert c.get("/api/todos").json() == before
-        proposal = preview["roadmap"]["schedule_proposals"][0]
-        scheduled, _ = action(
+        assert preview["error"] == "roadmap_scheduling_removed"
+        changed, _ = action(
             c,
             session,
-            "dates",
-            "confirm_roadmap_schedule",
-            {"roadmap_id": route["id"], "proposal_id": proposal["id"]},
+            "manual-date",
+            "update_todo",
+            {"todo_id": route["nodes"][0]["todo_id"], "date_text": "2026-10-01"},
         )
-        route = scheduled["roadmap"]
-        assert [n["scheduled_date"] for n in route["nodes"]] == [
-            "2026-10-01",
-            "2026-10-02",
-        ]
-        assert len(c.get("/api/todos").json()) == 1
+        assert changed["status"] == "completed"
+        route = c.get(f"/api/roadmaps/{route['id']}").json()
         accepted, _ = action(
             c, session, "all", "accept_roadmap_nodes", selection(route)
         )
         route = accepted["roadmap"]
         assert [n["todo"]["scheduled_date"] for n in route["nodes"]] == [
             "2026-10-01",
-            "2026-10-02",
+            None,
         ]
         draft = revision_args(route)
         preview, _ = action(
@@ -125,7 +121,7 @@ def test_memory_clarification_selection_schedule_completion_revision_and_restart
         route = done["roadmap"]
         assert route["nodes"][0]["completion"] == fact
         assert route["nodes"][1]["todo"]["title"] == "观察缓存倒计时和过期结果"
-        assert route["nodes"][1]["todo"]["scheduled_date"] == "2026-10-02"
+        assert route["nodes"][1]["todo"]["scheduled_date"] is None
         assert route["progress"] == {"completed": 1, "total": 2, "remaining": 1}
         for request_id in ("apply", "repeat-apply"):
             repeated, _ = action(

@@ -6,7 +6,7 @@ import sqlite3
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.todos import Clarification
 
@@ -23,7 +23,6 @@ CREATE TABLE IF NOT EXISTS learning_request_runs (
 QUESTIONS = {
     "goal": "希望学完后能做什么？",
     "background": "目前有哪些相关基础？",
-    "time_budget": "每次或每周可以投入多少时间？",
 }
 
 
@@ -36,19 +35,44 @@ class Intake(BaseModel):
         description="用户希望达成的用途或能力原话；仅说想学某主题不是目标，必须为null。",
     )
     background: str | None = Field(max_length=400)
-    time_budget: str | None = Field(max_length=400)
-    needed_fields: list[Literal["goal", "background", "time_budget"]] = Field(
-        max_length=3,
-        description="只列出会明显改变当前路线、必须核对的项；概览顺序无需时间预算时不列time_budget。",
+    time_budget: str | None = Field(
+        default=None,
+        max_length=400,
+        description="仅保留用户主动提供的时间原话作为背景；不要求、不追问，不用于排期。",
     )
+    needed_fields: list[Literal["goal", "background"]] = Field(
+        max_length=2,
+        description="只列出会明显改变当前路线、必须核对的目标或基础；永不追问时间。",
+    )
+
+    @field_validator("needed_fields", mode="before")
+    @classmethod
+    def ignore_legacy_time_field(cls, value: Any) -> Any:
+        if isinstance(value, list):
+            return [field for field in value if field != "time_budget"]
+        return value
 
 
 def read_all(db: sqlite3.Connection) -> list[dict[str, Any]]:
-    return [
-        json.loads(r["content"])
-        | {"id": r["id"], "version": r["version"], "roadmap_id": r["roadmap_id"]}
-        for r in db.execute("SELECT * FROM learning_requests ORDER BY rowid")
-    ]
+    requests = []
+    for row in db.execute("SELECT * FROM learning_requests ORDER BY rowid"):
+        content = json.loads(row["content"])
+        # Old time questions remain stored as history; reading never migrates
+        # records, claims generation ownership or invokes a provider.
+        content["questions"] = [
+            question
+            for question in content["questions"]
+            if question in QUESTIONS.values()
+        ]
+        requests.append(
+            content
+            | {
+                "id": row["id"],
+                "version": row["version"],
+                "roadmap_id": row["roadmap_id"],
+            }
+        )
+    return requests
 
 
 def save(
@@ -109,7 +133,7 @@ def save(
     if len(messages) > 20 or sum(len(m["content"]) for m in messages) > 16000:
         raise Clarification("此需求补充过长，请重新概括学习目标。")
     evidence = [m["content"] for m in messages] + [m["content"] for m in loaded]
-    known = {key: getattr(intake, key) for key in QUESTIONS}
+    known = {key: getattr(intake, key) for key in (*QUESTIONS, "time_budget")}
     for value in [intake.topic, *known.values()]:
         if value and not any(value in source for source in evidence):
             raise ValueError("学习需求含无来源的信息，请重试。")

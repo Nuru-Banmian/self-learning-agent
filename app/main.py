@@ -4,14 +4,14 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.evidence import Checkpoint
 from app.memory import active
@@ -24,8 +24,16 @@ from app.todos import Action, overview
 class ChatInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     request_id: str = Field(min_length=1, max_length=100, pattern=r"^[\w-]+$")
-    content: str = Field(min_length=1, max_length=8000)
+    content: str = Field(default="", max_length=8000)
     action: Action | None = None
+
+    @model_validator(mode="after")
+    def require_message_or_continuation(self) -> Self:
+        if not self.content:
+            if not self.action or self.action.tool != "continue_learning":
+                raise ValueError("请输入消息内容。")
+            self.content = "继续此学习需求"
+        return self
 
 
 def create_app(

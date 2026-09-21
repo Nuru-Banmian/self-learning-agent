@@ -354,7 +354,7 @@ def test_cross_session_concurrent_replies_and_replay_only_save_one_route(tmp_pat
         assert len(c.get("/api/learning-requests").json()) == 1
 
 
-def test_expired_time_memory_is_not_reused_from_saved_clarification(tmp_path):
+def test_expired_time_memory_is_not_reused_or_required_to_continue(tmp_path):
     now = datetime(2026, 9, 21, 8, tzinfo=UTC)
     base = intake_provider([])
 
@@ -415,10 +415,12 @@ def test_expired_time_memory_is_not_reused_from_saved_clarification(tmp_path):
         ]
         now = datetime(2026, 9, 22, 8, tzinfo=UTC)
         run, _ = submit(c, "目标是实现缓存", "next-day")
-        assert not run["roadmap"]
-        assert c.get("/api/learning-requests").json()[0]["questions"] == [
-            "每次或每周可以投入多少时间？"
-        ]
+        assert run["roadmap"], run
+        request = c.get("/api/learning-requests").json()[0]
+        assert request["questions"] == []
+        assert request["known"]["time_budget"] is None
+        assert request["memories"] == []
+        assert c.get("/api/todos").json() == []
 
 
 def test_replayed_answer_does_not_attach_to_another_pending_goal(tmp_path):
@@ -531,6 +533,34 @@ def test_time_budget_not_required_when_it_does_not_affect_requested_overview(tmp
         request = c.get("/api/learning-requests").json()[0]
         assert request["known"]["time_budget"] is None
         assert request["questions"] == []
+        assert c.get("/api/todos").json() == []
+
+
+@pytest.mark.parametrize("topic", ["Redis", "SQLite"])
+def test_complete_goal_and_background_search_without_any_time_answer(tmp_path, topic):
+    requests = []
+    base = intake_provider(requests)
+
+    def provider(request):
+        response = base(request)
+        payload = response.json()
+        for call in (
+            payload.get("choices", [{}])[0].get("message", {}).get("tool_calls", [])
+        ):
+            if call["function"]["name"] == "plan_learning_roadmap":
+                args = json.loads(call["function"]["arguments"])
+                args["intake"].update(topic=topic, time_budget=None)
+                call["function"]["arguments"] = json.dumps(args)
+        return httpx.Response(200, json=payload)
+
+    with roadmap_client(tmp_path, requests, provider) as c:
+        run, events = submit(c, f"我想学习 {topic}，有 Python 基础，目标是实现缓存")
+        assert run["roadmap"], run
+        assert "event: roadmap_saved" in events
+        assert any(url.endswith("/search/unified") for url, _ in requests)
+        pending = c.get("/api/learning-requests").json()[0]
+        assert pending["known"]["time_budget"] is None
+        assert pending["questions"] == []
         assert c.get("/api/todos").json() == []
 
 

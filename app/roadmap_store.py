@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS roadmap_completions (
 
 
 def read(db: sqlite3.Connection, roadmap_id: str) -> dict[str, Any] | None:
+    from app.revisions import date_changes_blocked
+
     row = db.execute("SELECT * FROM roadmaps WHERE id=?", (roadmap_id,)).fetchone()
     if row is None:
         return None
@@ -44,6 +46,7 @@ def read(db: sqlite3.Connection, roadmap_id: str) -> dict[str, Any] | None:
                 "id": node["id"],
                 "position": node["position"],
                 "todo_id": node["todo_id"],
+                "planned_date": node["planned_date"],
                 "scheduled_date": node["scheduled_date"]
                 if node["todo_id"]
                 else node["planned_date"],
@@ -74,12 +77,13 @@ def read(db: sqlite3.Connection, roadmap_id: str) -> dict[str, Any] | None:
         "nodes": nodes,
         "history_nodes": history,
         "revision_proposals": [
-            json.loads(p["content"]) | {"status": p["status"]}
+            proposal | {"date_changes_blocked": date_changes_blocked(proposal)}
             for p in db.execute(
                 "SELECT * FROM revision_proposals WHERE roadmap_id=? "
                 "ORDER BY rowid DESC",
                 (roadmap_id,),
             )
+            for proposal in [json.loads(p["content"]) | {"status": p["status"]}]
         ],
         "schedule_proposals": [
             json.loads(p["content"]) | {"status": p["status"]}
@@ -221,7 +225,7 @@ def accept_nodes(
                 (
                     todo_id,
                     node["todo_title"],
-                    node["scheduled_date"],
+                    None,
                     run["message_id"],
                     run["received_at"],
                     run["received_at"],
