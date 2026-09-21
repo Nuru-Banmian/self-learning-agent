@@ -149,6 +149,7 @@ type Action = {
     | "accept_suggestion"
     | "accept_roadmap_node"
     | "accept_roadmap_nodes"
+    | "complete_roadmap_node"
     | "continue_learning"
     | "update_memory"
     | "delete_memory";
