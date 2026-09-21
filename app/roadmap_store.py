@@ -30,9 +30,11 @@ def read(db: sqlite3.Connection, roadmap_id: str) -> dict[str, Any] | None:
         return None
     nodes = []
     for node in db.execute(
-        "SELECT n.*,t.title,t.scheduled_date,t.status,c.fact FROM roadmap_nodes n "
+        "SELECT n.*,t.title,t.scheduled_date,t.status,c.fact,"
+        "d.scheduled_date AS planned_date FROM roadmap_nodes n "
         "LEFT JOIN todos t ON t.id=n.todo_id "
         "LEFT JOIN roadmap_completions c ON c.node_id=n.id "
+        "LEFT JOIN roadmap_dates d ON d.node_id=n.id "
         "WHERE roadmap_id=? ORDER BY position",
         (roadmap_id,),
     ):
@@ -42,6 +44,9 @@ def read(db: sqlite3.Connection, roadmap_id: str) -> dict[str, Any] | None:
                 "id": node["id"],
                 "position": node["position"],
                 "todo_id": node["todo_id"],
+                "scheduled_date": node["scheduled_date"]
+                if node["todo_id"]
+                else node["planned_date"],
                 "status": node["status"]
                 if node["todo_id"]
                 else ("completed" if node["fact"] else "pending"),
@@ -64,6 +69,14 @@ def read(db: sqlite3.Connection, roadmap_id: str) -> dict[str, Any] | None:
         "version": row["version"],
         "created_at": row["created_at"],
         "nodes": nodes,
+        "schedule_proposals": [
+            json.loads(p["content"]) | {"status": p["status"]}
+            for p in db.execute(
+                "SELECT * FROM schedule_proposals WHERE roadmap_id=? "
+                "ORDER BY rowid DESC",
+                (roadmap_id,),
+            )
+        ],
         "progress": {
             "completed": completed,
             "total": len(nodes),
@@ -190,10 +203,11 @@ def accept_nodes(
         if node in pending:
             todo_id = str(uuid4())
             db.execute(
-                "INSERT INTO todos VALUES(?,?,NULL,'pending',?,?,?)",
+                "INSERT INTO todos VALUES(?,?,?,'pending',?,?,?)",
                 (
                     todo_id,
                     node["todo_title"],
+                    node["scheduled_date"],
                     run["message_id"],
                     run["received_at"],
                     run["received_at"],

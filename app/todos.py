@@ -65,6 +65,8 @@ class Action(BaseModel):
         "accept_roadmap_nodes",
         "complete_roadmap_node",
         "continue_learning",
+        "preview_roadmap_schedule",
+        "confirm_roadmap_schedule",
     ]
     arguments: dict[str, Any]
 
