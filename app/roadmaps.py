@@ -77,16 +77,34 @@ def unquoted_request(content: str) -> str:
 
 def roadmap_blocked(content: str) -> bool:
     text = unquoted_request(content)
+    learning = re.search(
+        r"(?:^|[，,。；;])\s*(?:我)?(?:想|要|希望|打算)(?:学习|学会|学)", text
+    )
     return bool(
-        re.search(
-            r"(?:不要|不用|不需要|不必|无需|别)[^，,。；;！？?]{0,12}(?:搜索|查找|联网)|"
+        search_blocked(content)
+        or re.match(r"\s*(?:请帮我|请|帮我)?(?:解释|说明)", text)
+        or (
+            not learning
+            and re.search(r"(?:不要|不用|不需要|不必|无需|别|不)(?:再)?学习", text)
+        )
+        or re.search(
             r"(?:不要|不用|不需要|不必|无需|别)(?:再|自动|帮我|为我|去|进行)?"
-            r"(?:搜索|查找|联网|路线|生成路线|规划|学习)|(?:不|没)想学|"
-            r"不(?:搜索|学习)|什么意思|这句话|(?:例如|比如|假如|如果).{0,8}我想学|"
-            r"(?:^|[，,。；;])\s*(?:请帮我|请|帮我)?(?:解释|说明|记录|记下|添加待办|创建待办)",
+            r"(?:路线|生成路线|规划)|(?:不|没)想学|"
+            r"什么意思|这句话|(?:例如|比如|假如|如果).{0,8}我想学|"
+            r"(?:^|[，,。；;])\s*(?:请帮我|请|帮我)?(?:记录|记下|记一条|添加待办|创建待办)",
             text,
         )
         or (text != content and not re.search(r"学|路线", text))
+    )
+
+
+def search_blocked(content: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:不要|不用|不需要|不必|无需|别)[^，,。；;！？?]{0,12}(?:搜索|查找|联网)|"
+            r"不搜索",
+            unquoted_request(content),
+        )
     )
 
 

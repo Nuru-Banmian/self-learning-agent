@@ -165,9 +165,11 @@ def test_single_node_acceptance_survives_cross_session_replay_without_model(tmp_
         "解释一下学习路线是什么意思",
         "他说‘我想学习 Redis’，这句话什么意思",
         "我想学习 Redis，但不要搜索",
+        "我不要学习 Redis",
         REQUEST + "，不要在网上搜索资料",
         REQUEST + "，不要再帮我搜索",
         "请记录明天学习 Redis",
+        "记一条明天学习 Redis 的待办",
     ],
 )
 def test_non_planning_intent_cannot_be_changed_to_roadmap_by_model(tmp_path, content):
@@ -186,6 +188,28 @@ def test_learning_without_dates_still_generates_route(tmp_path):
         assert c.get("/api/todos").json() == []
 
 
+@pytest.mark.parametrize("negative", ["不要在网上搜索资料", "不要再帮我搜索"])
+def test_negative_search_cannot_be_bypassed_with_ordinary_research(tmp_path, negative):
+    requests = []
+    base = roadmap_provider(requests)
+
+    def provider(request):
+        response = base(request)
+        payload = response.json()
+        if "choices" in payload:
+            message = payload["choices"][0]["message"]
+            for call in message.get("tool_calls", []):
+                if call["function"]["name"] == "plan_learning_roadmap":
+                    call["function"]["name"] = "research_learning"
+        return httpx.Response(200, json=payload)
+
+    with roadmap_client(tmp_path, requests, provider) as c:
+        run, _ = submit(c, REQUEST + "，" + negative)
+        assert not any("/search/unified" in url for url, _ in requests)
+        assert not run["roadmap"]
+        assert c.get("/api/todos").json() == []
+
+
 @pytest.mark.parametrize(
     "content",
     [
@@ -193,6 +217,8 @@ def test_learning_without_dates_still_generates_route(tmp_path):
         "我想学习 Redis 的数据记录和过期，有 Python 基础，"
         "目标是实现缓存，每次可投入30分钟",
         REQUEST + "，暂时不要加入待办",
+        REQUEST + "，不要学习集群，只学基础缓存",
+        REQUEST + "，请说明每个节点的完成标准",
         "我想学习 Redis 的‘SET’命令，有 Python 基础，目标是实现缓存，每次可投入30分钟",
     ],
 )

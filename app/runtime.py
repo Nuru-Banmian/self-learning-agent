@@ -24,6 +24,7 @@ from app.roadmaps import (
     explicit_roadmap,
     finish_roadmap,
     roadmap_blocked,
+    search_blocked,
 )
 from app.settings import Settings
 from app.store import Store
@@ -244,6 +245,8 @@ async def execute(
             if not isinstance(arguments, dict):
                 raise ValueError("模型操作参数无效，未修改待办。")
             if tool in ("research_learning", "plan_learning_roadmap"):
+                if search_blocked(run["content"]):
+                    raise Clarification("已按本次要求跳过搜索，未生成有来源的路线。")
                 if tool == "plan_learning_roadmap" and roadmap_blocked(run["content"]):
                     raise Clarification(
                         "本轮未生成路线。需要学习路线时请明确主题和学习目标。"
