@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     @classmethod
     def valid_weather_host(cls, value: str) -> str:
         value = value.strip().lower()
-        if value and not re.fullmatch(r"[a-z0-9-]+\.qweatherapi\.com", value):
+        if value and (
+            len(value) > 253
+            or not re.fullmatch(
+                r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+qweatherapi\.com",
+                value,
+            )
+        ):
             raise ValueError("和风 API Host 须为账户专属的 *.qweatherapi.com 域名")
         return value

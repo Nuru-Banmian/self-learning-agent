@@ -117,7 +117,10 @@ def main():
             )
             assert baseline["memory"]["loaded"] == []
             learned = step(
-                client, "learn", "我喜欢优先阅读官方资料，今天我要学习 Python 生成器"
+                client,
+                "learn",
+                "我看技术资料喜欢先看官方文档，再做一个小练习。"
+                "今天我要学 Python 生成器。",
             )
             assert learned["memory"]["saved_ids"]
             assert len(client.get("/api/todos").json()) == 1
