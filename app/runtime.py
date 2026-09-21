@@ -20,6 +20,8 @@ from app.research import (
     memory_query,
     research_learning,
 )
+from app.revision_chat import Revision, RevisionRequest, chat_request, generate
+from app.revisions import Confirmation
 from app.roadmaps import (
     NodeSelection,
     NodesSelection,
@@ -93,6 +95,35 @@ async def execute(
                 selected_id = args["request_id"]
             if run["action"] and not selected_id:
                 action = run["action"]
+                if action["tool"] == "revise_roadmap":
+                    await generate(
+                        store,
+                        settings,
+                        run,
+                        RevisionRequest.model_validate(action["arguments"]),
+                        transport,
+                    )
+                    return
+                if action["tool"] == "preview_roadmap_revision":
+                    revision_content = Revision.model_validate(action["arguments"])
+                    store.finish(
+                        run_id,
+                        "completed",
+                        "",
+                        revision_preview={"request": revision_content.model_dump()},
+                    )
+                    return
+                if action["tool"] == "confirm_roadmap_revision":
+                    revision_confirmation = Confirmation.model_validate(
+                        action["arguments"]
+                    )
+                    store.finish(
+                        run_id,
+                        "completed",
+                        "",
+                        revision_confirm=revision_confirmation.model_dump(),
+                    )
+                    return
                 if action["tool"] == "preview_roadmap_schedule":
                     request = ScheduleRequest.model_validate(action["arguments"])
                     store.finish(
@@ -174,6 +205,10 @@ async def execute(
                 store.finish(
                     run_id, "completed", "", change=change, tool=action["tool"]
                 )
+                return
+            revision_request = chat_request(store, run["content"])
+            if revision_request:
+                await generate(store, settings, run, revision_request, transport)
                 return
             schedule_request = await chat_schedule(store, settings, run, transport)
             if schedule_request:
@@ -569,7 +604,14 @@ async def execute(
             record["gaps"].append("整轮处理超时，未完成查询或学习安排；已有资料保留。")
             record["status"] = "partial" if record["sources"] else "error"
             store.research_record(run_id, record)
-            if record.get("purpose") == "roadmap":
+            if record.get("purpose") == "revision":
+                store.finish(
+                    run_id,
+                    "partial",
+                    "调整处理超时，已有资料已保留，未应用任何调整。",
+                    error="timeout",
+                )
+            elif record.get("purpose") == "roadmap":
                 finish_roadmap(store, run, record)
             else:
                 finish_research(store, run, local, record)

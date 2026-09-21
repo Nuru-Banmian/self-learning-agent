@@ -8,7 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from app import learning_requests as learning_request_store
-from app import roadmap_store, scheduling
+from app import revisions, roadmap_store, scheduling
 from app.memory_policy import overlaps
 from app.todos import Clarification
 
@@ -68,6 +68,7 @@ class Store:
                     created_at TEXT NOT NULL);
             """)
             db.executescript(roadmap_store.SCHEMA)
+            db.executescript(revisions.SCHEMA)
             db.executescript(scheduling.SCHEMA)
             db.executescript(learning_request_store.SCHEMA)
             columns = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
@@ -654,6 +655,8 @@ class Store:
         accept_node: dict[str, Any] | None = None,
         accept_nodes: dict[str, Any] | None = None,
         complete_node: dict[str, Any] | None = None,
+        revision_preview: dict[str, Any] | None = None,
+        revision_confirm: dict[str, Any] | None = None,
         schedule_preview: dict[str, Any] | None = None,
         schedule_confirm: dict[str, Any] | None = None,
     ) -> None:
@@ -664,6 +667,24 @@ class Store:
             if run is None or run["status"] not in ("running", "queued"):
                 return
             ids = []
+            if revision_preview or revision_confirm:
+                proposal, reply = (
+                    revisions.preview(db, run, revision_preview)
+                    if revision_preview
+                    else revisions.confirm(db, run, revision_confirm or {})
+                )
+                current_route = roadmap_store.read(db, proposal["roadmap_id"])
+                db.execute(
+                    "UPDATE runs SET roadmap=? WHERE id=?",
+                    (json.dumps(current_route, ensure_ascii=False), run_id),
+                )
+                self._event(
+                    db,
+                    run_id,
+                    "roadmap_revision_"
+                    + ("preview" if revision_preview else proposal["status"]),
+                    proposal,
+                )
             if schedule_preview or schedule_confirm:
                 proposal, reply = (
                     scheduling.preview(db, run, schedule_preview)
@@ -1070,6 +1091,8 @@ class Store:
                         or accept_node
                         or accept_nodes
                         or complete_node
+                        or revision_preview
+                        or revision_confirm
                         or schedule_preview
                         or schedule_confirm
                     ),
