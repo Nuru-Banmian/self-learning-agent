@@ -8,7 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from app import learning_requests as learning_request_store
-from app import roadmap_store
+from app import roadmap_store, scheduling
 from app.memory_policy import overlaps
 from app.todos import Clarification
 
@@ -68,6 +68,7 @@ class Store:
                     created_at TEXT NOT NULL);
             """)
             db.executescript(roadmap_store.SCHEMA)
+            db.executescript(scheduling.SCHEMA)
             db.executescript(learning_request_store.SCHEMA)
             columns = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
             if "roadmap" not in columns:
@@ -653,6 +654,8 @@ class Store:
         accept_node: dict[str, Any] | None = None,
         accept_nodes: dict[str, Any] | None = None,
         complete_node: dict[str, Any] | None = None,
+        schedule_preview: dict[str, Any] | None = None,
+        schedule_confirm: dict[str, Any] | None = None,
     ) -> None:
         # Todos, success evidence, assistant message and terminal state commit together.
         with self.connect() as db:
@@ -661,6 +664,27 @@ class Store:
             if run is None or run["status"] not in ("running", "queued"):
                 return
             ids = []
+            if schedule_preview or schedule_confirm:
+                proposal, reply = (
+                    scheduling.preview(db, run, schedule_preview)
+                    if schedule_preview
+                    else scheduling.confirm(db, run, schedule_confirm or {})
+                )
+                current_route = roadmap_store.read(db, proposal["roadmap_id"])
+                db.execute(
+                    "UPDATE runs SET roadmap=? WHERE id=?",
+                    (json.dumps(current_route, ensure_ascii=False), run_id),
+                )
+                self._event(
+                    db,
+                    run_id,
+                    "roadmap_schedule_preview"
+                    if schedule_preview
+                    else "roadmap_schedule_stale"
+                    if proposal["status"] == "stale"
+                    else "roadmap_schedule_confirmed",
+                    proposal,
+                )
             if roadmap:
                 saved_roadmap = roadmap_store.save(db, run, roadmap)
                 learning_request_store.complete(
@@ -698,7 +722,7 @@ class Store:
                     },
                 )
                 reply = (
-                    "已加入所选节点 — 未安排。"
+                    "已加入所选节点，日期以路线当前安排为准。"
                     if created
                     else "该节点已完成，本次跳过，未新增待办。"
                     if next(
@@ -728,7 +752,8 @@ class Store:
                 existing = sum(r["status"] == "already_added" for r in results)
                 completed = sum(r["status"] == "completed" for r in results)
                 reply = (
-                    f"本次新增 {created_count} 项（未安排）；已加入 {existing} 项，"
+                    f"本次新增 {created_count} 项（日期以节点安排为准）；"
+                    f"已加入 {existing} 项，"
                     f"跳过已完成 {completed} 项。未选节点保持原状。"
                     if results
                     else "未选择节点，未新增待办；路线已保留。"
@@ -856,6 +881,15 @@ class Store:
                             run["received_at"],
                             todo["id"],
                         ),
+                    )
+                if any(
+                    key in change and change[key] != todo[key]
+                    for key in ("title", "scheduled_date")
+                ):
+                    db.execute(
+                        "UPDATE roadmaps SET version=version+1 WHERE id IN "
+                        "(SELECT roadmap_id FROM roadmap_nodes WHERE todo_id=?)",
+                        (todo["id"],),
                     )
                 ids.append(todo["id"])
                 if change.get("status") == "completed":
@@ -1036,6 +1070,8 @@ class Store:
                         or accept_node
                         or accept_nodes
                         or complete_node
+                        or schedule_preview
+                        or schedule_confirm
                     ),
                     run_id,
                 ),

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { SchedulePanel, type ScheduleProposal } from "./SchedulePanel";
 
 export type RoadmapSummary = {
   id: string;
@@ -17,6 +18,7 @@ type Node = {
   todo_title: string;
   source_ids: string[];
   todo_id: string | null;
+  scheduled_date: string | null;
   status?: string;
   completion: {
     completed_at: string;
@@ -28,6 +30,7 @@ type Node = {
 };
 type Roadmap = RoadmapSummary & {
   request: string;
+  schedule_proposals: ScheduleProposal[];
   nodes: Node[];
   progress: { completed: number; total: number; remaining: number };
   gaps: string[];
@@ -42,7 +45,7 @@ type Roadmap = RoadmapSummary & {
   }[];
 };
 export type RoadmapAction = {
-  tool: "accept_roadmap_nodes" | "complete_roadmap_node";
+  tool: "accept_roadmap_nodes" | "complete_roadmap_node" | "preview_roadmap_schedule" | "confirm_roadmap_schedule";
   arguments: Record<string, unknown>;
 };
 
@@ -72,7 +75,7 @@ export function RoadmapPanel({
   }, []);
   useEffect(() => {
     let cancelled = false;
-    setRoute(null);
+    setRoute(previous => previous?.id === selection.id ? previous : null);
     setError("");
     setChecked([]);
     if (selection.id) {
@@ -148,6 +151,7 @@ export function RoadmapPanel({
               {gap}
             </p>
           ))}
+          <SchedulePanel key={route.id} route={route} disabled={disabled} act={act} />
           <p>是否将节点加入待办？预计耗时仅供参考。</p>
           <a href="#learning-roadmaps" className="roadmap-link">
             暂不加入（保留路线）
@@ -171,11 +175,11 @@ export function RoadmapPanel({
             aria-label="确认加入清单"
             aria-live="polite"
           >
-            <p>本次待新增 {pending.length} 项 · 默认未安排日期</p>
+            <p>本次待新增 {pending.length} 项 · 沿用已确认的节点日期</p>
             {pending.length ? (
               <ul>
                 {pending.map((node) => (
-                  <li key={node.id}>{node.todo_title}</li>
+                  <li key={node.id}>{node.todo_title} · {node.scheduled_date || "未安排"}</li>
                 ))}
               </ul>
             ) : (
@@ -214,6 +218,7 @@ export function RoadmapPanel({
                 {node.position}. {node.goal}
               </h4>
               <p>预计 {node.estimated_minutes} 分钟</p>
+              <p>当前节点安排：{node.scheduled_date || "未安排"}</p>
               <p>练习：{node.exercise}</p>
               <p>完成标准：{node.completion_criteria}</p>
               <p>候选待办：{node.todo_title}</p>

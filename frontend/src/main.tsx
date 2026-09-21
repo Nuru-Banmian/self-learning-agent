@@ -150,6 +150,8 @@ type Action = {
     | "accept_roadmap_node"
     | "accept_roadmap_nodes"
     | "complete_roadmap_node"
+    | "preview_roadmap_schedule"
+    | "confirm_roadmap_schedule"
     | "continue_learning"
     | "update_memory"
     | "delete_memory";

@@ -31,6 +31,8 @@ from app.roadmaps import (
     roadmap_blocked,
     search_blocked,
 )
+from app.schedule_chat import chat_schedule
+from app.scheduling import ScheduleConfirmation, ScheduleRequest
 from app.settings import Settings
 from app.store import Store
 from app.todos import (
@@ -91,6 +93,29 @@ async def execute(
                 selected_id = args["request_id"]
             if run["action"] and not selected_id:
                 action = run["action"]
+                if action["tool"] == "preview_roadmap_schedule":
+                    request = ScheduleRequest.model_validate(action["arguments"])
+                    store.finish(
+                        run_id,
+                        "completed",
+                        "",
+                        schedule_preview={
+                            "request": request.model_dump(),
+                            "timezone": settings.user_timezone,
+                        },
+                    )
+                    return
+                if action["tool"] == "confirm_roadmap_schedule":
+                    confirmation = ScheduleConfirmation.model_validate(
+                        action["arguments"]
+                    )
+                    store.finish(
+                        run_id,
+                        "completed",
+                        "",
+                        schedule_confirm=confirmation.model_dump(),
+                    )
+                    return
                 if action["tool"] == "complete_roadmap_node":
                     selection = NodeSelection.model_validate(action["arguments"])
                     store.finish(
@@ -148,6 +173,18 @@ async def execute(
                 )
                 store.finish(
                     run_id, "completed", "", change=change, tool=action["tool"]
+                )
+                return
+            schedule_request = await chat_schedule(store, settings, run, transport)
+            if schedule_request:
+                store.finish(
+                    run_id,
+                    "completed",
+                    "",
+                    schedule_preview={
+                        "request": schedule_request.model_dump(),
+                        "timezone": settings.user_timezone,
+                    },
                 )
                 return
             mastery_target = chat_mastery(store, run["content"])
