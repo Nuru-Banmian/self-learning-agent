@@ -61,6 +61,7 @@ class Action(BaseModel):
         "update_memory",
         "delete_memory",
         "reprocess_memory",
+        "accept_roadmap_node",
     ]
     arguments: dict[str, Any]
 

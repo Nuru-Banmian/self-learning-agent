@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.iqs import IQS, result_status
 from app.memory import Usage
 from app.model import ModelError, call_model
+from app.roadmaps import compose_roadmap, finish_roadmap
 from app.settings import Settings
 from app.store import Store
 from app.todos import Clarification, overview, render_overview
@@ -95,6 +96,8 @@ async def research_learning(
     revision: int,
     arguments: dict[str, Any],
     transport: httpx.AsyncBaseTransport | None,
+    *,
+    roadmap: bool = False,
 ) -> None:
     task = ResearchTask.model_validate(arguments)
     if not set(task.todo_ids) <= {
@@ -120,6 +123,7 @@ async def research_learning(
         )
     run_id = run["id"]
     record: dict[str, Any] = {
+        "purpose": "roadmap" if roadmap else "research",
         "task": task.model_dump(),
         "input_summary": {
             "request": run["content"],
@@ -137,11 +141,30 @@ async def research_learning(
     store.event(
         run_id,
         "tool_call",
-        {"role": "main", "tool": "research_learning", "input": task.model_dump()},
+        {
+            "role": "main",
+            "tool": "plan_learning_roadmap" if roadmap else "research_learning",
+            "input": task.model_dump(),
+        },
     )
     store.event(run_id, "role", {"role": "execution", "status": "processing"})
     executor = IQS(settings, store, run_id, record, transport)
     await executor.search(task.query)
+    if (
+        roadmap
+        and result_status(record) == "empty"
+        and "site:" in task.query
+        and not re.search(
+            r"只|仅|site:", run["content"] + " ".join(m["content"] for m in loaded)
+        )
+    ):
+        broader = re.sub(r"site:[\w.-]+|\bOR\b", "", task.query)
+        broader = " ".join(broader.split())
+        if len(broader) >= 2:
+            record["gaps"].append(
+                "定向检索没有结果，已扩大搜索范围；新结果不保证为官方资料。"
+            )
+            await executor.search(broader)
     if task.read_body:
         for source in record["sources"][:2]:
             await executor.read_page(source)
@@ -149,6 +172,28 @@ async def research_learning(
     store.research_record(run_id, record)
     store.event(run_id, "role", {"role": "execution", "status": record["status"]})
     store.event(run_id, "role", {"role": "main", "status": "processing"})
+    if roadmap:
+        route_answer = None
+        if record["sources"]:
+            try:
+                route_answer = await compose_roadmap(
+                    store, settings, run, loaded, record, transport
+                )
+                if store.memory_revision() != revision:
+                    store.memory_record(run_id, loaded=[], usage=[])
+                    raise ValueError("记忆在查询期间已更新")
+            except (ModelError, ValueError, KeyError, TypeError, IndexError):
+                route_answer = None
+                record["gaps"].append(
+                    "路线组织失败或记忆已变化；实际资料保留，请重试。"
+                )
+                record["status"] = "partial"
+        if route_answer:
+            store.memory_record(
+                run_id, usage=[u.model_dump() for u in route_answer.memory_usage]
+            )
+        finish_roadmap(store, run, record, route_answer)
+        return
     if not record["sources"]:
         finish_research(store, run, local, record)
         return

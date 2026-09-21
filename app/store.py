@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app import roadmap_store
 from app.memory_policy import overlaps
 from app.todos import Clarification
 
@@ -65,7 +66,12 @@ class Store:
                     status TEXT NOT NULL, baseline_run_id TEXT REFERENCES runs,
                     created_at TEXT NOT NULL);
             """)
+            db.executescript(roadmap_store.SCHEMA)
             columns = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
+            if "roadmap" not in columns:
+                db.execute(
+                    "ALTER TABLE runs ADD COLUMN roadmap TEXT NOT NULL DEFAULT '{}'"
+                )
             if "execution" not in columns:
                 db.execute(
                     "ALTER TABLE runs ADD COLUMN execution TEXT NOT NULL DEFAULT '{}'"
@@ -171,6 +177,7 @@ class Store:
                     )
                 ],
                 "research": json.loads(row["research"]),
+                "roadmap": json.loads(row["roadmap"]),
                 "weather": json.loads(row["weather"]),
                 "retryable": self._retryable(row),
                 "retry_run_id": next(
@@ -263,6 +270,26 @@ class Store:
                 (json.dumps(record, ensure_ascii=False), run_id),
             )
             self._event(db, run_id, "research", record)
+
+    def roadmaps(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            return [
+                {
+                    "id": r["id"],
+                    "version": r["version"],
+                    "created_at": r["created_at"],
+                    **{
+                        k: json.loads(r["content"])[k]
+                        for k in ("title", "goal", "status")
+                    },
+                }
+                for r in db.execute("SELECT * FROM roadmaps ORDER BY rowid DESC")
+            ]
+
+    def roadmap(self, roadmap_id: str) -> dict[str, Any] | None:
+        with self.connect() as db:
+            db.execute("BEGIN")
+            return roadmap_store.read(db, roadmap_id)
 
     def memories(self) -> list[dict[str, Any]]:
         with self.connect() as db:
@@ -588,6 +615,8 @@ class Store:
         suggestions: list[dict[str, Any]] | None = None,
         accept: str | None = None,
         memory_change: dict[str, Any] | None = None,
+        roadmap: dict[str, Any] | None = None,
+        accept_node: dict[str, Any] | None = None,
     ) -> None:
         # Todos, success evidence, assistant message and terminal state commit together.
         with self.connect() as db:
@@ -596,6 +625,43 @@ class Store:
             if run is None or run["status"] not in ("running", "queued"):
                 return
             ids = []
+            if roadmap:
+                saved_roadmap = roadmap_store.save(db, run, roadmap)
+                db.execute(
+                    "UPDATE runs SET roadmap=? WHERE id=?",
+                    (
+                        json.dumps(saved_roadmap, ensure_ascii=False),
+                        run_id,
+                    ),
+                )
+                self._event(db, run_id, "roadmap_saved", saved_roadmap)
+            if accept_node:
+                accepted_route, todo_id, created = roadmap_store.accept_node(
+                    db, run, accept_node
+                )
+                ids.append(todo_id)
+                db.execute(
+                    "UPDATE runs SET roadmap=? WHERE id=?",
+                    (
+                        json.dumps(accepted_route, ensure_ascii=False),
+                        run_id,
+                    ),
+                )
+                self._event(
+                    db,
+                    run_id,
+                    "roadmap_node_accepted",
+                    {
+                        **accept_node,
+                        "todo_id": todo_id,
+                        "created": created,
+                    },
+                )
+                reply = (
+                    "已加入所选节点 — 未安排。"
+                    if created
+                    else "该节点已关联待办，本次未重复新增。"
+                )
             if memory_change:
                 target = db.execute(
                     "SELECT * FROM memories WHERE id=? AND state != 'deleted'",
@@ -741,13 +807,13 @@ class Store:
                         "suggestions": suggestions,
                     },
                 )
-            if items or change:
+            if items or change or accept_node:
                 self._event(
                     db,
                     run_id,
                     "tool_result",
                     {
-                        "tool": tool,
+                        "tool": "accept_roadmap_node" if accept_node else tool,
                         "status": "success",
                         "todo_ids": ids,
                     },
@@ -834,7 +900,15 @@ class Store:
                     json.dumps(ids),
                     error,
                     reply_message_id,
-                    bool(items or change or memory_change or accept or suggestions),
+                    bool(
+                        items
+                        or change
+                        or memory_change
+                        or accept
+                        or suggestions
+                        or roadmap
+                        or accept_node
+                    ),
                     run_id,
                 ),
             )
@@ -858,8 +932,10 @@ class Store:
     def todos(self) -> list[dict[str, Any]]:
         with self.connect() as db:
             rows = db.execute(
-                "SELECT t.*,m.content,m.session_id FROM todos t "
-                "JOIN messages m ON m.id=t.message_id ORDER BY t.rowid"
+                "SELECT t.*,m.content,m.session_id,n.roadmap_id,n.id AS node_id "
+                "FROM todos t "
+                "JOIN messages m ON m.id=t.message_id "
+                "LEFT JOIN roadmap_nodes n ON n.todo_id=t.id ORDER BY t.rowid"
             ).fetchall()
             return [
                 {
@@ -869,6 +945,9 @@ class Store:
                     "status": r["status"],
                     "created_at": r["created_at"],
                     "updated_at": r["updated_at"],
+                    "roadmap": {"id": r["roadmap_id"], "node_id": r["node_id"]}
+                    if r["roadmap_id"]
+                    else None,
                     "source": {
                         "message_id": r["message_id"],
                         "session_id": r["session_id"],
