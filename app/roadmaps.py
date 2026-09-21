@@ -290,7 +290,12 @@ def finish_roadmap(
             for m in record["input_summary"]["memories"]
             if m["category"] == "preference"
         ]
-        if "官方" in run["content"] + " ".join(preferences):
+        official_requested = any(
+            "官方" in clause
+            and not re.search(r"不要|不用|不需要|不必|无需|别|不看|不读", clause)
+            for clause in re.split(r"[，,。；;！？!?\n]", unquoted_request(run["content"]))
+        )
+        if official_requested or "官方" in " ".join(preferences):
             record["gaps"].append(
                 "来源的官方身份尚未核实，不能确认满足官方资料偏好；请核对所列来源。"
             )
