@@ -63,6 +63,18 @@ def function_tool(
 
 
 TOOLS = [
+    function_tool(
+        "plan_learning_roadmap",
+        "用户表达学习意图且背景目标充分时，实际搜索并保存有序学习路线，不创建待办。"
+        "不用于否定、引用、解释概念或直接记待办。",
+        {
+            "query": {"type": "string", "maxLength": 1024},
+            "todo_ids": {"type": "array", "items": {"type": "string"}},
+            "memory_ids": {"type": "array", "items": {"type": "string"}},
+            "read_body": {"type": "boolean"},
+        },
+        ["query", "todo_ids", "memory_ids", "read_body"],
+    ),
     CREATE_TOOL,
     function_tool(
         "prepare_outing",

@@ -170,6 +170,17 @@ def create_app(
     def todos() -> list[dict[str, Any]]:
         return store.todos()
 
+    @app.get("/api/roadmaps")
+    def roadmaps() -> list[dict[str, Any]]:
+        return store.roadmaps()
+
+    @app.get("/api/roadmaps/{roadmap_id}")
+    def roadmap(roadmap_id: str) -> dict[str, Any]:
+        result = store.roadmap(roadmap_id)
+        if result is None:
+            raise HTTPException(404, "学习路线不存在")
+        return result
+
     @app.get("/api/memories")
     def memories() -> list[dict[str, Any]]:
         return [

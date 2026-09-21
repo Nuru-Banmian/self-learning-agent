@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./style.css";
 import { WeatherPanel, type WeatherEvidence } from "./WeatherPanel";
 import { EvidencePanel } from "./EvidencePanel";
+import { RoadmapPanel, type RoadmapSummary } from "./RoadmapPanel";
 
 type Message = { id: string; role: string; content: string };
 type Todo = {
@@ -11,6 +12,7 @@ type Todo = {
   scheduled_date: string | null;
   status: string;
   source: { content: string; message_id: string; session_id: string };
+  roadmap: { id: string; node_id: string } | null;
 };
 type Memory = {
   id: string;
@@ -144,6 +146,7 @@ type Action = {
     | "update_todo"
     | "complete_todo"
     | "accept_suggestion"
+    | "accept_roadmap_node"
     | "update_memory"
     | "delete_memory";
   arguments: Record<string, unknown>;
@@ -471,6 +474,7 @@ function TodoCard({
           消息 {todo.source.message_id}
         </small>
       </details>
+      {todo.roadmap && <a href={`#roadmap-${todo.roadmap.id}/${todo.roadmap.node_id}`} className="roadmap-link">查看节点学习内容</a>}
     </li>
   );
 }
@@ -512,6 +516,7 @@ function App() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [roadmaps, setRoadmaps] = useState<RoadmapSummary[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState("准备就绪");
@@ -534,7 +539,7 @@ function App() {
     const isCurrent = () =>
       currentSession.current === id && refreshVersion.current === version;
     try {
-      const [data, summary, ideas, savedMemories] = await Promise.all([
+      const [data, summary, ideas, savedMemories, savedRoadmaps] = await Promise.all([
         api<{
           messages: Message[];
           latest_run_id: string | null;
@@ -543,6 +548,7 @@ function App() {
         api<Overview>("/todos/overview"),
         api<Suggestion[]>(`/sessions/${id}/suggestions`),
         api<Memory[]>("/memories"),
+        api<RoadmapSummary[]>("/roadmaps"),
       ]);
       const history = await Promise.all(
         data.run_ids.map((runId) => api<Run>(`/runs/${runId}`)),
@@ -553,6 +559,7 @@ function App() {
       setOverview(summary);
       setSuggestions(ideas);
       setMemories(savedMemories);
+      setRoadmaps(savedRoadmaps);
       // A run may finish after the session snapshot; include its committed reply.
       const byId = new Map(
         data.messages.map((message) => [message.id, message]),
@@ -967,6 +974,7 @@ function App() {
             ))}
           </section>
           <ResearchPanel research={research} />
+          <RoadmapPanel roadmaps={roadmaps} disabled={!session || busy || !!pending} act={act} />
           <WeatherPanel weather={weather} />
           <section className="suggestions" aria-label="行动建议">
             <div className="panel-head">

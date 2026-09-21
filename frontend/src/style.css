@@ -504,3 +504,8 @@ footer {
 .evidence-panel form {
   padding: 12px 0;
 }
+/* Durable learning content shares the workbench's existing card treatment. */
+.roadmap-link { display: block; margin: 0.7rem 0; overflow-wrap: anywhere; }
+.roadmaps h4 { margin-bottom: 0.5rem; }
+.roadmaps details { margin: 0.75rem 0; }
+.roadmaps section { scroll-margin-top: 1.5rem; }
