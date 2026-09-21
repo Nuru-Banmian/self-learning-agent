@@ -59,6 +59,18 @@ def chat_selection(store: Store, content: str) -> NodeSelection | None:
     if not match:
         return None
     reference = match[1].strip()
+    return select_node(store, reference)
+
+
+def chat_mastery(store: Store, content: str) -> NodeSelection | None:
+    match = re.fullmatch(
+        r"(?:请)?(?:把|将)?\s*节点\s*(.+?)\s*(?:标记为?|标为)已掌握[。！!]?",
+        content.strip(),
+    )
+    return select_node(store, match[1].strip()) if match else None
+
+
+def select_node(store: Store, reference: str) -> NodeSelection:
     targets = []
     for summary in store.roadmaps():
         route = store.roadmap(summary["id"])
@@ -74,8 +86,7 @@ def chat_selection(store: Store, content: str) -> NodeSelection | None:
                 )
     if len(targets) != 1:
         raise Clarification(
-            "请在路线面板选择一个节点，或说‘把节点 完整标识 加入待办’；"
-            "当前目标不明确，未新增。"
+            "请在路线面板选择一个节点，或使用节点完整标识；当前目标不明确，未修改。"
         )
     return targets[0]
 

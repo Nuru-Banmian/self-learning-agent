@@ -24,6 +24,7 @@ from app.roadmaps import (
     NodeSelection,
     NodesSelection,
     chat_batch_selection,
+    chat_mastery,
     chat_selection,
     explicit_roadmap,
     finish_roadmap,
@@ -90,6 +91,12 @@ async def execute(
                 selected_id = args["request_id"]
             if run["action"] and not selected_id:
                 action = run["action"]
+                if action["tool"] == "complete_roadmap_node":
+                    selection = NodeSelection.model_validate(action["arguments"])
+                    store.finish(
+                        run_id, "completed", "", complete_node=selection.model_dump()
+                    )
+                    return
                 if action["tool"] == "accept_roadmap_nodes":
                     selections = NodesSelection.model_validate(action["arguments"])
                     store.finish(
@@ -141,6 +148,12 @@ async def execute(
                 )
                 store.finish(
                     run_id, "completed", "", change=change, tool=action["tool"]
+                )
+                return
+            mastery_target = chat_mastery(store, run["content"])
+            if mastery_target:
+                store.finish(
+                    run_id, "completed", "", complete_node=mastery_target.model_dump()
                 )
                 return
             chat_target = chat_selection(store, run["content"])

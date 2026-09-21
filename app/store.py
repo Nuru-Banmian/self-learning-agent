@@ -652,6 +652,7 @@ class Store:
         roadmap: dict[str, Any] | None = None,
         accept_node: dict[str, Any] | None = None,
         accept_nodes: dict[str, Any] | None = None,
+        complete_node: dict[str, Any] | None = None,
     ) -> None:
         # Todos, success evidence, assistant message and terminal state commit together.
         with self.connect() as db:
@@ -677,7 +678,8 @@ class Store:
                 accepted_route, todo_id, created = roadmap_store.accept_node(
                     db, run, accept_node
                 )
-                ids.append(todo_id)
+                if todo_id:
+                    ids.append(todo_id)
                 db.execute(
                     "UPDATE runs SET roadmap=? WHERE id=?",
                     (
@@ -698,6 +700,13 @@ class Store:
                 reply = (
                     "已加入所选节点 — 未安排。"
                     if created
+                    else "该节点已完成，本次跳过，未新增待办。"
+                    if next(
+                        n
+                        for n in accepted_route["nodes"]
+                        if n["id"] == accept_node["node_id"]
+                    )["status"]
+                    == "completed"
                     else "该节点已关联待办，本次未重复新增。"
                 )
             if accept_nodes:
@@ -723,6 +732,33 @@ class Store:
                     f"跳过已完成 {completed} 项。未选节点保持原状。"
                     if results
                     else "未选择节点，未新增待办；路线已保留。"
+                )
+            if complete_node:
+                completed_route, created = roadmap_store.mark_mastered(
+                    db, run, complete_node
+                )
+                completed_node = next(
+                    n
+                    for n in completed_route["nodes"]
+                    if n["id"] == complete_node["node_id"]
+                )
+                if completed_node["todo_id"]:
+                    ids.append(completed_node["todo_id"])
+                db.execute(
+                    "UPDATE runs SET roadmap=? WHERE id=?",
+                    (json.dumps(completed_route, ensure_ascii=False), run_id),
+                )
+                self._event(
+                    db,
+                    run_id,
+                    "roadmap_node_completed",
+                    {**complete_node, "created": created},
+                )
+                reply = (
+                    "已标记为已掌握。" if created else "节点已完成，保留原完成记录。"
+                )
+                reply += (
+                    "关联待办已完成。" if completed_node["todo_id"] else "未创建待办。"
                 )
             if memory_change:
                 target = db.execute(
@@ -808,18 +844,38 @@ class Store:
                 ).fetchone()
                 if todo is None:
                     raise Clarification("请刷新列表，指定存在的待办，本次未修改。")
-                db.execute(
-                    "UPDATE todos SET title=?,scheduled_date=?,status=?,updated_at=? "
-                    "WHERE id=?",
-                    (
-                        change.get("title", todo["title"]),
-                        change.get("scheduled_date", todo["scheduled_date"]),
-                        change.get("status", todo["status"]),
-                        run["received_at"],
-                        todo["id"],
-                    ),
-                )
+                if not (change.get("status") == todo["status"] == "completed"):
+                    db.execute(
+                        "UPDATE todos SET title=?,scheduled_date=?,"
+                        "status=?,updated_at=? "
+                        "WHERE id=?",
+                        (
+                            change.get("title", todo["title"]),
+                            change.get("scheduled_date", todo["scheduled_date"]),
+                            change.get("status", todo["status"]),
+                            run["received_at"],
+                            todo["id"],
+                        ),
+                    )
                 ids.append(todo["id"])
+                if change.get("status") == "completed":
+                    node = db.execute(
+                        "SELECT id FROM roadmap_nodes WHERE todo_id=?", (todo["id"],)
+                    ).fetchone()
+                    if node:
+                        completed_route, created = roadmap_store.complete(
+                            db, run, node["id"], "complete_todo"
+                        )
+                        db.execute(
+                            "UPDATE runs SET roadmap=? WHERE id=?",
+                            (json.dumps(completed_route, ensure_ascii=False), run_id),
+                        )
+                        self._event(
+                            db,
+                            run_id,
+                            "roadmap_node_completed",
+                            {"node_id": node["id"], "created": created},
+                        )
                 reply = (
                     f"已更新：{change.get('title', todo['title'])} — "
                     + (change.get("scheduled_date", todo["scheduled_date"]) or "未安排")
@@ -869,14 +925,16 @@ class Store:
                         "suggestions": suggestions,
                     },
                 )
-            if items or change or accept_node or accept_nodes:
+            if items or change or accept_node or accept_nodes or complete_node:
                 self._event(
                     db,
                     run_id,
                     "tool_result",
                     {
                         "tool": (
-                            "accept_roadmap_nodes"
+                            "complete_roadmap_node"
+                            if complete_node
+                            else "accept_roadmap_nodes"
                             if accept_nodes
                             else "accept_roadmap_node"
                             if accept_node
@@ -977,6 +1035,7 @@ class Store:
                         or roadmap
                         or accept_node
                         or accept_nodes
+                        or complete_node
                     ),
                     run_id,
                 ),

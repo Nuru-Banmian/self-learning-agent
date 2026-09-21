@@ -18,11 +18,18 @@ type Node = {
   source_ids: string[];
   todo_id: string | null;
   status?: string;
+  completion: {
+    completed_at: string;
+    operation: string;
+    content: string;
+    node: { goal: string; exercise: string; completion_criteria: string };
+  } | null;
   todo: { title: string; scheduled_date: string | null; status: string } | null;
 };
 type Roadmap = RoadmapSummary & {
   request: string;
   nodes: Node[];
+  progress: { completed: number; total: number; remaining: number };
   gaps: string[];
   sources: {
     id: string;
@@ -35,7 +42,7 @@ type Roadmap = RoadmapSummary & {
   }[];
 };
 export type RoadmapAction = {
-  tool: "accept_roadmap_nodes";
+  tool: "accept_roadmap_nodes" | "complete_roadmap_node";
   arguments: Record<string, unknown>;
 };
 
@@ -128,6 +135,10 @@ export function RoadmapPanel({
         <article aria-label="路线详情">
           <h3>{route.title}</h3>
           <p>目标：{route.goal}</p>
+          <p role="status">
+            学习进度：已完成 {route.progress.completed} / {route.progress.total}，
+            剩余 {route.progress.remaining} 个节点
+          </p>
           <details>
             <summary>原始学习需求</summary>
             <p>{route.request}</p>
@@ -206,6 +217,17 @@ export function RoadmapPanel({
               <p>练习：{node.exercise}</p>
               <p>完成标准：{node.completion_criteria}</p>
               <p>候选待办：{node.todo_title}</p>
+              <p>节点状态：{node.status === "completed" ? "已完成" : "待完成"}</p>
+              {node.completion && (
+                <details>
+                  <summary>完成记录 · {new Date(node.completion.completed_at).toLocaleString()}</summary>
+                  <p>{node.completion.operation === "mastered" ? "用户标记已掌握" : "关联待办完成"}</p>
+                  <p>操作依据：{node.completion.content}</p>
+                  <p>完成时目标：{node.completion.node.goal}</p>
+                  <p>完成时练习：{node.completion.node.exercise}</p>
+                  <p>完成时标准：{node.completion.node.completion_criteria}</p>
+                </details>
+              )}
               {node.todo && (
                 <p>
                   当前待办：{node.todo.title} ·{" "}
@@ -265,6 +287,19 @@ export function RoadmapPanel({
                 <summary>节点标识</summary>
                 <small>{node.id}</small>
               </details>
+              <button
+                disabled={disabled || node.status === "completed"}
+                onClick={() => act(`将节点「${node.goal}」标记为已掌握`, {
+                  tool: "complete_roadmap_node",
+                  arguments: {
+                    roadmap_id: route.id,
+                    node_id: node.id,
+                    expected_version: route.version,
+                  },
+                })}
+              >
+                标记已掌握{node.todo_id ? "（同步完成待办）" : "（不创建待办）"}
+              </button>
             </section>
           ))}
         </article>
