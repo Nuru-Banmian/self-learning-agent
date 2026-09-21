@@ -603,8 +603,7 @@ function App() {
     setResearch(null);
     setWeather(null);
     setRuns([]);
-    const savedMemories = await api<Memory[]>("/memories");
-    if (currentSession.current === created.id) setMemories(savedMemories);
+    await refresh(created.id);
     return created.id;
   }
 
