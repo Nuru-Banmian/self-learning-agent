@@ -52,7 +52,7 @@
 | `f3c69fb853` | 3 / 4 | 字段描述加强后的第四轮：两主题均 partial，单项防重和两路线重启读回通过。Python 生成器改成完整无参调用；Redis 未明确提示官方偏好未满足。此为修复前真实证据，未改写结果 |
 | `334b75bfac` | 3 / 4 | 收尾代码第五轮：两主题均 partial，应用官方身份提示在真实回复和保存路线中出现；单项防重及两路线重启读回通过。Python 再出现平台命令和组合输出问题，见下文 |
 
-本轮没有把旧记录中的成功结果充当新运行结果，也没有将后两轮替换掉首轮失败。每轮都执行了全部双主题脚本。
+本轮没有把旧记录中的成功结果充当新运行结果，也没有用后续轮次替换首轮失败。每轮都执行了全部双主题脚本。
 
 ### 第三轮九节点人工阅读检查（保留原结论）
 
@@ -78,7 +78,7 @@
 
 | 节点 | 阅读结论 |
 | --- | --- |
-| Redis 1 Docker / redis-py 准备 | Docker 安装启动、容器内 PING 有说明；`docker ps | grep my-redis` 未提供 PowerShell 等价命令，跨平台可执行性部分满足 |
+| Redis 1 Docker / redis-py 准备 | Docker 安装启动、容器内 PING 有说明；`docker ps \| grep my-redis` 未提供 PowerShell 等价命令，跨平台可执行性部分满足 |
 | Redis 2 Python 读写 | 完整 `redis.Redis(..., decode_responses=True)`、set/get、确切字符串断言，输入与类型相符 |
 | Redis 3 过期缓存 | 独立脚本重新创建连接，setex 5 秒、等待 6 秒、None 预期相符；即时读值仍依赖运行时未经历超过 TTL 的停顿 |
 | Python 1 测试日志 | 三行 INFO/ERROR/INFO，正反样例齐全 |
@@ -112,7 +112,7 @@
 
 从第三轮真实双主题库备份，Redis 原有一个关联待办；全选后仍为五条 Redis 关联项，另保留一条 Python 待办。真实自然语言“从明天开始、每天1小时30分钟”生成排期；预览不改待办，确认才应用。完成首节点后，实际再次调用百炼与 IQS，调整第二节点为容器内 CLI SET/GET；其余节点、日期及首节点完成事实保持不变。拒绝同步不写入，明确同步后持久保存，真实进程重启后读回一致。
 
-该调整有一个实际搜索调用。**发现具体依赖缺口**：第二节点原负责创建 Python Redis 连接 `r`，改为 CLI 后不再初始化 `r`，保留的第 3～5 节点仍调用 `r.setex/r.get`，按调整后顺序执行会缺少前置准备。用户要求保留其他节点，不能擅自重写它们；原始真实路线未修复，也未自动迁移旧库。收尾新增预览风险提示及生成约束，但不能把它报告为这份课程已修好。CLI 新节点命令及 hello 预期经阅读，练习未执行。
+该调整有一个实际搜索调用。**发现具体依赖缺口**：第二节点原负责创建 Python Redis 连接 `r`，改为 CLI 后不再初始化 `r`，保留的第 3～5 节点仍调用 `r.setex/r.get`，按调整后顺序执行会缺少前置准备。原请求明确第二节点“不写 Python 代码”并保留其他节点，不能擅自重写它们；原始真实路线未修复，也未自动迁移旧库。收尾新增预览风险提示及生成约束，但不能把它报告为这份课程已修好。CLI 新节点命令及 hello 预期经阅读，练习未执行。
 
 ## 浏览器与升级
 
@@ -126,21 +126,25 @@
 
 专项 `test_roadmap_journey.py` 初次通过（1 passed），是已有能力的组合验收，不声称先红后绿。随后路线+组合专项 **32 passed**，两条既有 Starlette/AnyIO 弃用警告。提示约束的失败证据来自真实模型输出，不写断言提示词文本的伪回归测试。
 
-收尾检查（应用代码 `352ba11`）：
+收尾检查（按代码版本区分）：
 
 - 新偏好提示的公开接口测试先失败，原结果为 completed/success 且无缺口；修复后通过。扩大专项初次为 **31 passed / 1 failed**，暴露已有记忆失败提示仅覆盖 completed 的问题；保留 `output/issue18/preference-red.txt`、`preference-green.txt`，后者虽然命名 green，内容实际含一次失败，不能称通过。修复组合错误后路线/调整/journey 专项 **71 passed**；随后扩展的三种偏好情形（生效记忆、当前要求、当前视频例外）**3 passed**。
 - 先修依赖提示公开接口测试先失败、修复后通过，证据 `dependency-red.txt` / `dependency-green.txt`。验证预览不写原节点、确认才合并缺口、后续节点保留和无供应商重启读回；不验证练习语义。
-- 最终全量 **325 passed，2 warnings，149.52 秒**，`output/issue18/final-suite.txt`。两条为既有 Starlette/AnyIO 弃用警告。早前 **321 passed** 在最终字段描述及提示修复前，不能代替此结果。
-- mypy **21 源文件**、Ruff check、Ruff format **95 文件**、前端 TypeScript/Vite build 均通过，分别保存在 `final-mypy.txt` / `final-ruff.txt` / `final-format.txt` / `final-build.txt`。中间曾有新增断言超长，format 后解决；文档编辑曾产生 CRLF 差异，已统一本轮文档为 LF，`git diff --check` 通过。
+- `352ba11` 全量 **325 passed，2 warnings，149.52 秒**，`output/issue18/final-suite.txt`。两条为既有 Starlette/AnyIO 弃用警告。早前 **321 passed** 在最终字段描述及提示修复前，不能代替此结果。
+- 明确否定修复后的中间全量 **326 passed，2 warnings，150.61 秒**，`final-suite-after-review.txt`；该次测试启动后又补充了正向但否定视频场景，不能作为 `dc41274` 的最终全量。
+- 最终应用代码 `dc41274` 全量 **327 passed，2 warnings，148.57 秒**，`output/issue18/final-suite-dc41274.txt`；代码在该轮运行中未改动。随后仅更新本验收文档。
+- mypy **21 源文件**、Ruff check、Ruff format **95 文件**、前端 TypeScript/Vite build 均通过，分别保存在 `final-mypy.txt` / `final-ruff.txt` / `final-format.txt` / `final-build.txt`。在 `dc41274` 上重跑 mypy/Ruff/format 也通过，见三个 `final-*-after-review.txt`；前端未变化，沿用同一 build。中间曾有新增断言超长，format 后解决；文档编辑曾产生 CRLF 差异，已统一本轮文档为 LF，`git diff --check` 通过。
 - Playwright 收尾补验使用 `tests.roadmap_demo:create_demo_app` 与 `output/issue18/final-browser/roadmaps.db`、8099 端口，供应商模拟。真实页面显示官方身份提示；手工改第一节点练习、预览出现先修依赖提示，确认并刷新后路线仍保留两项缺口。文本快照 `final-browser-route.txt` / `final-browser-preview.txt` / `final-browser-confirmed.txt`，截图 `output/playwright/issue18-final-warning.png` 已目视检查。该截图仅证明提示可见，不证明示例练习完整可运行。
 - 受保护 `CONTEXT.md`、`HANDOFF.md` 的 SHA-256 与交接记录一致；`docs/plans/` 文件清单及哈希与本次开始快照一致。仅显式暂存本轮文件，未纳入以上用户内容。
 
 ### Standards
 
-固定基线 `93aa5b1`，独立代理审查 `git diff 93aa5b1...HEAD`（至 `352ba11`），**0 项可操作发现**。未发现文档标准硬违规或需要修改的基线代码异味。测试使用公开边界，风险提示未引入额外解析抽象；各类证据和未验证部分区分清楚。代理仅阅读，未运行测试。
+固定基线 `93aa5b1`，独立代理审查 `git diff 93aa5b1...HEAD`，并复核增量至 `dc41274`，**0 项可操作发现**。未发现文档标准硬违规或需要修改的基线代码异味。测试使用公开边界，风险提示未引入额外解析抽象；各类证据和未验证部分区分清楚。代理仅阅读，未运行测试。
 
 ### Spec
 
-初审发现 **1 项 P2 代码缺陷**：当前明确“这次不要官方资料，只看视频”仍因原文含“官方”被追加缺口，违反当前要求优先及 LR-03。新增公开接口回归先红（1 failed / 3 passed），修复为仅考虑未引用、未否定的当前官方要求及生效偏好；路线专项 **35 passed**。证据 `output/issue18/review-preference-red.txt` / `review-preference-green.txt`。修复后独立复核待补。
+初审发现 **1 项 P2 代码缺陷**：当前明确“这次不要官方资料，只看视频”仍因原文含“官方”被追加缺口，违反当前要求优先及 LR-03。新增公开接口回归先红（1 failed / 3 passed），修复为仅考虑未引用、未否定的当前官方要求及生效偏好；路线专项 **35 passed**。证据 `output/issue18/review-preference-red.txt` / `review-preference-green.txt`。修复后独立复核关闭原 P2。随后自查正向“优先官方资料但不要视频”被宽泛否定条件误伤，新增回归先红（1 failed / 4 passed），改为否定仅作用于官方资料短语，路线专项 **36 passed**；保留 `review-positive-red.txt` / `review-positive-green.txt`。Spec 代理独立复跑五种偏好情形 **5 passed、31 deselected、2 warnings**，至 `dc41274` 无剩余可操作代码问题或无关扩展。
 
 另外保留 **1 类必要验收缺口（LR-14 部分满足）**：真实来源偏好、生成练习平台兼容性/组合正确性，以及真实 CLI 调整后的初始化缺口。新增提示不是课程修复，第四/第五轮未复现 n 缺参也不构成普遍质量保证。代理独立阅读原始节点并用供应商模拟公开接口复现 P2，没有执行生成练习。
+
+最终双轴结论：**Standards 0 项，Spec 0 项剩余代码发现 + 1 类必要内容验收缺口**。只在当前 main 本地提交，未推送、创建 PR 或关闭 Issue #18。未执行生成的学习练习，未重新验证旧真实调整课程已修复；LR-14 保持部分满足。
