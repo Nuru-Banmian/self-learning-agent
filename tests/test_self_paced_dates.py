@@ -249,8 +249,16 @@ def test_revision_new_node_has_no_date_and_completed_fact_is_unchanged(tmp_path)
 
 
 @pytest.mark.parametrize("model_changes_date", [False, True])
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        "这条路线太难了，改简单一点",
+        "这条路线太难了，改简单一点，不要安排日期",
+        "请调整这条路线，把第一个练习改简单一点，不要为路线排期",
+    ],
+)
 def test_model_revision_omits_dates_or_fails_without_saving_changes(
-    tmp_path, model_changes_date
+    tmp_path, model_changes_date, instruction
 ):
     base = roadmap_provider([])
 
@@ -291,7 +299,7 @@ def test_model_revision_omits_dates_or_fails_without_saving_changes(
         )
         before = c.get(f"/api/roadmaps/{route['id']}").json()
         todos = c.get("/api/todos").json()
-        result, events = submit(c, "这条路线太难了，改简单一点", "revise", session)
+        result, events = submit(c, instruction, "revise", session)
         assert result["model_calls"] == 2, result
         if model_changes_date:
             assert result["status"] == "failed"

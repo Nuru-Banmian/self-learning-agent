@@ -1,5 +1,7 @@
 """Retired scheduling still rejects old clients through HTTP and SSE."""
 
+import pytest
+
 from tests.test_chat import submit
 from tests.test_maintenance import action
 from tests.test_roadmaps import REQUEST, roadmap_client
@@ -29,7 +31,15 @@ def test_old_schedule_action_fails_without_model_or_business_writes(tmp_path):
         assert client.get("/api/todos").json() == []
 
 
-def test_node_join_cannot_fall_back_to_dated_ordinary_creation(tmp_path):
+@pytest.mark.parametrize(
+    "content",
+    [
+        "请将这条路线的第一个节点明天加入待办",
+        "请安排明天学习这条路线的第一个节点",
+        "请添加明天学习这条路线的第一个节点",
+    ],
+)
+def test_node_join_cannot_fall_back_to_dated_ordinary_creation(tmp_path, content):
     import httpx
 
     from tests.test_chat import tool_response
@@ -38,10 +48,12 @@ def test_node_join_cannot_fall_back_to_dated_ordinary_creation(tmp_path):
     base = roadmap_provider([])
 
     def provider(request):
-        if "明天加入待办" in request.content.decode():
+        if content in request.content.decode():
             return httpx.Response(
                 200,
-                json=tool_response([{"title": "学习第一个节点", "date_text": "明天"}]),
+                json=tool_response(
+                    [{"title": "学习这条路线的第一个节点", "date_text": "明天"}]
+                ),
             )
         return base(request)
 
@@ -49,7 +61,7 @@ def test_node_join_cannot_fall_back_to_dated_ordinary_creation(tmp_path):
         generated, _ = submit(client, REQUEST)
         result, _ = submit(
             client,
-            "请将这条路线的第一个节点明天加入待办",
+            content,
             "join-with-date",
             generated["session_id"],
         )

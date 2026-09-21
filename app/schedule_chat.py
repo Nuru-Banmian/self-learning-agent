@@ -18,6 +18,18 @@ def scheduling_request(content: str) -> bool:
 
 def chat_schedule(store: Store, content: str) -> bool:
     text = unquoted_request(content)
+    # A negated date clause protects dates; it must not cancel a separate
+    # affirmative content adjustment in the same request.
+    affirmative = re.sub(
+        r"(?:不要|不用|不需要|不必|无需|别|暂不|不(?=排期|安排日期))"
+        r"[^，,。；;！？!?\n]*",
+        "",
+        text,
+    )
+    if not scheduling_request(affirmative) and re.search(
+        r"调整|修改|简化|重排|改简单|改容易|太难了|学习目标.*改", affirmative
+    ):
+        return False
     # Direct ordinary todo commands retain their own date authorization checks.
     if re.search(
         r"^\s*(?:请|麻烦)?(?:帮我|给我)?(?:记录|记下|记一条|添加待办|创建待办|完成|标记完成)",

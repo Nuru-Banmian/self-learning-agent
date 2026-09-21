@@ -138,10 +138,13 @@ def chat_batch_selection(store: Store, content: str) -> NodesSelection | None:
             "路线或节点目标不明确，未新增。请在路线面板全选或勾选部分节点后确认；"
             "也可说‘把路线 完整标识 全部加入待办’。"
         )
-    if re.search(
-        r"(?:(?:这条|该|学习)路线|第[一二三四五六七八\d]+个?节点)"
-        r"[^。！？!?]*?(?:加入待办|加进去)",
-        unquoted_request(content),
+    text = unquoted_request(content)
+    node_reference = re.search(
+        r"(?:(?:这条|该|学习)路线|第[一二三四五六七八\d]+个?节点)", text
+    )
+    if node_reference and (
+        re.search(r"加入待办|加进去", text)
+        or ("节点" in text and re.search(r"记录|添加|新增|安排", text))
     ):
         raise Clarification(
             "请在路线面板选择节点后确认，或提供节点完整标识；"
