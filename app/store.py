@@ -651,6 +651,7 @@ class Store:
         memory_change: dict[str, Any] | None = None,
         roadmap: dict[str, Any] | None = None,
         accept_node: dict[str, Any] | None = None,
+        accept_nodes: dict[str, Any] | None = None,
     ) -> None:
         # Todos, success evidence, assistant message and terminal state commit together.
         with self.connect() as db:
@@ -698,6 +699,30 @@ class Store:
                     "已加入所选节点 — 未安排。"
                     if created
                     else "该节点已关联待办，本次未重复新增。"
+                )
+            if accept_nodes:
+                accepted_route, results = roadmap_store.accept_nodes(
+                    db, run, accept_nodes
+                )
+                ids.extend(r["todo_id"] for r in results if r["todo_id"])
+                db.execute(
+                    "UPDATE runs SET roadmap=? WHERE id=?",
+                    (json.dumps(accepted_route, ensure_ascii=False), run_id),
+                )
+                self._event(
+                    db,
+                    run_id,
+                    "roadmap_nodes_accepted",
+                    {**accept_nodes, "results": results},
+                )
+                created_count = sum(r["status"] == "created" for r in results)
+                existing = sum(r["status"] == "already_added" for r in results)
+                completed = sum(r["status"] == "completed" for r in results)
+                reply = (
+                    f"本次新增 {created_count} 项（未安排）；已加入 {existing} 项，"
+                    f"跳过已完成 {completed} 项。未选节点保持原状。"
+                    if results
+                    else "未选择节点，未新增待办；路线已保留。"
                 )
             if memory_change:
                 target = db.execute(
@@ -844,13 +869,19 @@ class Store:
                         "suggestions": suggestions,
                     },
                 )
-            if items or change or accept_node:
+            if items or change or accept_node or accept_nodes:
                 self._event(
                     db,
                     run_id,
                     "tool_result",
                     {
-                        "tool": "accept_roadmap_node" if accept_node else tool,
+                        "tool": (
+                            "accept_roadmap_nodes"
+                            if accept_nodes
+                            else "accept_roadmap_node"
+                            if accept_node
+                            else tool
+                        ),
                         "status": "success",
                         "todo_ids": ids,
                     },
@@ -945,6 +976,7 @@ class Store:
                         or suggestions
                         or roadmap
                         or accept_node
+                        or accept_nodes
                     ),
                     run_id,
                 ),

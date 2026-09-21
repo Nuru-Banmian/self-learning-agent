@@ -509,3 +509,6 @@ footer {
 .roadmaps h4 { margin-bottom: 0.5rem; }
 .roadmaps details { margin: 0.75rem 0; }
 .roadmaps section { scroll-margin-top: 1.5rem; }
+.roadmap-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.roadmap-confirmation { margin: 1rem 0; padding: 1rem; border: 1px solid #dfe3d7; border-radius: 8px; background: #f6f8f1; }
+.roadmaps label { display: flex; align-items: center; gap: 0.5rem; }

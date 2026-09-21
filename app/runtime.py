@@ -22,6 +22,8 @@ from app.research import (
 )
 from app.roadmaps import (
     NodeSelection,
+    NodesSelection,
+    chat_batch_selection,
     chat_selection,
     explicit_roadmap,
     finish_roadmap,
@@ -88,6 +90,12 @@ async def execute(
                 selected_id = args["request_id"]
             if run["action"] and not selected_id:
                 action = run["action"]
+                if action["tool"] == "accept_roadmap_nodes":
+                    selections = NodesSelection.model_validate(action["arguments"])
+                    store.finish(
+                        run_id, "completed", "", accept_nodes=selections.model_dump()
+                    )
+                    return
                 if action["tool"] == "accept_roadmap_node":
                     selection = NodeSelection.model_validate(action["arguments"])
                     store.finish(
@@ -139,6 +147,12 @@ async def execute(
             if chat_target:
                 store.finish(
                     run_id, "completed", "", accept_node=chat_target.model_dump()
+                )
+                return
+            batch_target = chat_batch_selection(store, run["content"])
+            if batch_target:
+                store.finish(
+                    run_id, "completed", "", accept_nodes=batch_target.model_dump()
                 )
                 return
             correction = chat_memory_change(
