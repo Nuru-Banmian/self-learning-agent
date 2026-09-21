@@ -101,6 +101,26 @@ def preview(
         raise Clarification(
             "方案没有实际变化，未保存调整方案；请重新描述具体需要修改的内容。"
         )
+    gaps = list(args.get("gaps", []))
+    # Replacing or removing an exercise can remove setup used by later nodes.
+    # This is an uncertainty warning, not a semantic dependency validator.
+    if any(
+        e["before"]
+        and (
+            e["kind"] == "archive" or e["before"]["exercise"] != e["after"]["exercise"]
+        )
+        and any(
+            n["id"] in old
+            and old[n["id"]]["position"] > e["before"]["position"]
+            and n["exercise"] == old[n["id"]]["exercise"]
+            for n in nodes
+        )
+        for e in entries
+    ):
+        gaps.append(
+            "前序练习已修改或移出，保留的后续练习的先修依赖尚未核验。"
+            "请检查变量初始化、文件和环境准备；若缺失，请补充调整方案后再确认。"
+        )
     proposal = {
         "id": str(uuid4()),
         "roadmap_id": route["id"],
@@ -110,7 +130,7 @@ def preview(
         "entries": entries,
         "snapshot": snapshot(route),
         "sources": sources,
-        "gaps": args.get("gaps", []),
+        "gaps": gaps,
         "sync_todo_ids": sorted(
             {
                 e["todo_before"]["id"]

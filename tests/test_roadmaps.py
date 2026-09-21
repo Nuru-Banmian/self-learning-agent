@@ -109,6 +109,80 @@ def roadmap_client(tmp_path, requests, provider=None, **settings):
     )
 
 
+@pytest.mark.parametrize(
+    "request_text,save_preference,expect_gap",
+    [
+        (REQUEST, True, True),
+        (REQUEST + "，优先官方资料", False, True),
+        (REQUEST + "，这次只看视频", True, False),
+        (REQUEST + "，这次不要官方资料，只看视频", True, False),
+        (REQUEST + "，这次优先官方资料但不要视频", False, True),
+    ],
+)
+def test_official_preference_uncertainty_survives_model_omission_and_restart(
+    tmp_path, request_text, save_preference, expect_gap
+):
+    from tests.test_memory import candidate
+
+    preference = "我喜欢优先阅读官方资料"
+    base = roadmap_provider([])
+
+    def provider(request):
+        body = json.loads(request.content)
+        if "response_format" in body:
+            source = json.loads(body["messages"][-1]["content"])
+            candidates = [candidate(source)] if source["content"] == preference else []
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": json.dumps({"candidates": candidates})}}
+                    ]
+                },
+            )
+        if body.get("messages", [{}])[-1].get("content") == preference:
+            return httpx.Response(
+                200,
+                json=operation_response(
+                    "answer_question", {"reply": "收到", "memory_usage": []}
+                ),
+            )
+        if request.url.path == "/search/unified":
+            return httpx.Response(
+                200,
+                json={
+                    "pageItems": [
+                        {
+                            "title": "Redis 官方教程转载",
+                            "link": "https://example.com/redis",
+                            "snippet": "SET GET EX",
+                        }
+                    ]
+                },
+            )
+        return base(request)
+
+    with roadmap_client(tmp_path, [], provider) as c:
+        if save_preference:
+            saved, _ = submit(c, preference, "preference")
+            assert saved["memory"]["saved_ids"]
+        run, events = submit(c, request_text, "route")
+        route = run["roadmap"]
+        assert "event: terminal" in events
+        assert (
+            any("官方" in gap and "核实" in gap for gap in route["gaps"]) == expect_gap
+        )
+        if expect_gap:
+            assert run["status"] == route["status"] == "partial"
+            assert route["gaps"][0] in run["reply"]
+            assert route["gaps"][0] in run["research"]["gaps"]
+        else:
+            assert route["gaps"] == []
+        assert c.get("/api/todos").json() == []
+    with roadmap_client(tmp_path, [], dashscope_api_key="", iqs_api_key="") as c:
+        assert c.get(f"/api/roadmaps/{route['id']}").json() == route
+
+
 def test_natural_learning_request_saves_sourced_ordered_roadmap_without_todos(tmp_path):
     requests = []
     with roadmap_client(tmp_path, requests) as c:

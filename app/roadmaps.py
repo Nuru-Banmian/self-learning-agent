@@ -19,7 +19,15 @@ class Node(BaseModel):
     goal: str = Field(min_length=1, max_length=300)
     estimated_minutes: int = Field(ge=1, le=480)
     source_ids: list[str] = Field(min_length=1, max_length=5)
-    exercise: str = Field(min_length=1, max_length=600)
+    exercise: str = Field(
+        min_length=1,
+        max_length=600,
+        description=(
+            "可执行练习：给出输入、操作和完整调用示例。"
+            "函数示例必须包含所有实际参数值，不能只写函数名或要求读者自行选择参数；"
+            "例如生成器取两项时明确写gen=count_up(3)，而不是仅写调用count_up(n)。"
+        ),
+    )
     completion_criteria: str = Field(min_length=1, max_length=400)
     todo_title: str = Field(min_length=1, max_length=200)
 
@@ -194,11 +202,22 @@ async def compose_roadmap(
                     "每个节点引用实际来源ID，不生成URL，不声称已读全文、已完成练习或已加入待办。"
                     "不能只重复学习主题；完成标准必须可检查。不要安排日期。"
                     "第一步明确需要准备的运行环境、服务与依赖，不能假定用户已有。"
+                    "环境准备只给一种可行路径并写出启动与验证命令，"
+                    "若服务在容器中，验证命令也在容器中执行，不假定宿主机有CLI。"
+                    "使用Docker前说明需安装并启动Docker，不能直接假定docker命令可用。"
                     "练习说明输入、操作及可观察输出；不要让用户直接运行抽取残缺的网页代码。"
                     "正文乱码或代码不完整时在gaps说明，并给出可独立执行的练习要求。"
                     "完成标准要对应练习实际包含的操作，优先确定性检查，不把耗时差异当成必然结果。"
                     "仅覆盖达成本次目标必要的能力，不顺带增加无关的进阶、优化或资源管理专题。"
-                    "输出前检查：API返回类型与预期一致；每项断言都有练习步骤支撑；"
+                    "输出前逐节点演算：API默认返回类型与预期一致，"
+                    "区分字节串与文本、None与False；需要解码时显式配置或解码。"
+                    "不要照搬资料里的print注释作为实际输出。"
+                    "每项断言都有练习步骤支撑；过滤练习的输入须含匹配和不匹配样例。"
+                    "涉及函数实参、输入文件或变量时给出确切测试输入和来源，不能让读者猜。"
+                    "例如断言第4次迭代结束，必须在练习中指定仅产生3项的输入；"
+                    "检查倒计时只要求合理范围，不保证调度耗时小于一秒。"
+                    "所有练习只覆盖goal要求的最小闭环，删除检索材料附带的高级API专题；"
+                    "不把无资源泄漏警告当作正确关闭文件的证明。"
                     "不要用无法证明的替代指标作完成标准。不确定的行为应标记缺口，不能承诺。"
                     "仅有摘要时如实使用摘要，不把第三方资料说成官方。"
                     "gaps说明资料不足、偏好未满足或无法支持的目标；不确定官方归属也明确说明。"
@@ -265,6 +284,27 @@ def finish_roadmap(
 ) -> None:
     content = None
     if answer:
+        # Search titles and model prose are not evidence of publisher identity.
+        preferences = [
+            m["content"]
+            for m in record["input_summary"]["memories"]
+            if m["category"] == "preference"
+        ]
+        official_requested = any(
+            "官方" in clause
+            and not re.search(
+                r"(?:不要|不用|不需要|不必|无需|别|不)"
+                r"(?:再|给我|为我|帮我|优先|推荐|查找|搜索|阅读|使用|采用|喜欢|看|读|找|搜|用)*官方",
+                clause,
+            )
+            for clause in re.split(
+                r"[，,。；;！？!?\n]", unquoted_request(run["content"])
+            )
+        )
+        if official_requested or "官方" in " ".join(preferences):
+            record["gaps"].append(
+                "来源的官方身份尚未核实，不能确认满足官方资料偏好；请核对所列来源。"
+            )
         record["gaps"].extend(answer.gaps)
         if record["gaps"]:
             record["status"] = "partial"
