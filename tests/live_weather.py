@@ -16,6 +16,21 @@ from tests.test_chat import submit
 from tests.test_weather import city, forecast
 
 
+def shanghai_followup(run):
+    """Select the seeded Shanghai city only from actual disambiguation results."""
+    if not run["weather"].get("candidates"):
+        return None
+    matches = [
+        place
+        for place in run["weather"]["candidates"]
+        if place["id"] == "101020100"
+        and place["name"] == "上海"
+        and place["country"] == "中国"
+    ]
+    assert len(matches) == 1, "Expected Shanghai city is absent from actual candidates"
+    return f"查询明天地点{matches[0]['id']}天气，出门需要准备什么？"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mock-weather", action="store_true")
@@ -70,26 +85,35 @@ def main():
                 "clock": lambda: datetime(2026, 9, 20, 2, tzinfo=UTC),
             }
         with TestClient(create_app(settings, **options)) as client:
-            started = monotonic()
-            run, events = submit(client, "查询明天上海天气，出门需要准备什么？")
-            print(
-                json.dumps(
-                    {
-                        "mode": "real-model/mock-weather"
-                        if args.mock_weather
-                        else "real-model/real-weather",
-                        "status": run["status"],
-                        "weather": run["weather"],
-                        "reply": run["reply"],
-                        "elapsed_ms": round((monotonic() - started) * 1000),
-                        "proxy": "trust_env=False",
-                        "mainland_network": "unverified",
-                    },
-                    ensure_ascii=False,
-                ),
-                flush=True,
-            )
-            assert "event: terminal" in events
+
+            def step(content, request_id):
+                started = monotonic()
+                run, events = submit(client, content, request_id)
+                print(
+                    json.dumps(
+                        {
+                            "step": request_id,
+                            "mode": "real-model/mock-weather"
+                            if args.mock_weather
+                            else "real-model/real-weather",
+                            "status": run["status"],
+                            "weather": run["weather"],
+                            "reply": run["reply"],
+                            "elapsed_ms": round((monotonic() - started) * 1000),
+                            "proxy": "trust_env=False",
+                            "mainland_network": "unverified",
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                assert "event: terminal" in events
+                return run
+
+            run = step("查询明天上海天气，出门需要准备什么？", "outing")
+            followup = shanghai_followup(run)
+            if followup:
+                run = step(followup, "outing-resolved")
             assert client.get("/api/todos").json() == []
             assert run["weather"]["status"] == "success"
             assert run["weather"]["forecast"]

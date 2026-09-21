@@ -162,6 +162,8 @@ async def learn(
                     "你是学习 Agent，只提出用户记忆候选，不执行操作。"
                     "只提取当前用户自己明确表达的背景、偏好、临时条件，不保存待办、问题、推测或引用。"
                     "content 必须是用户原文完整分句，不能改写或遗漏否定、时间、限定。"
+                    "从 source_clauses 选择完整内容；"
+                    "先做什么、再做什么的偏好须整体保留。"
                     "topic 必须是原文中至少两个字符的连续片段，不能生成原文没有的词。"
                     "例如‘今天只有半小时’的 topic=半小时，不能用原文没有的‘时间’。"
                     "持续偏好为 preference/general/ongoing；"
@@ -178,6 +180,7 @@ async def learn(
                     {
                         "message_id": run["message_id"],
                         "content": run["content"],
+                        "source_clauses": clauses,
                         "local_time": local.isoformat(),
                         "tasks": [
                             {"id": t["id"], "title": t["title"]} for t in store.todos()

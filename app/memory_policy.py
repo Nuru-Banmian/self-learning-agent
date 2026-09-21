@@ -139,7 +139,25 @@ def source_clauses(content: str) -> list[str]:
         content,
     ):
         return []
-    return [p.strip() for p in re.split(r"[，,。；;\n！？!?]", content) if p.strip()]
+    clauses: list[str] = []
+    parts = re.split(r"([，,。；;\n！？!?])", content)
+    for index in range(0, len(parts), 2):
+        clause = parts[index].strip()
+        if not clause:
+            continue
+        # Keep a stated preference's ordered steps together, including the
+        # original comma. A full stop ends the preference, never joins a task.
+        if (
+            clauses
+            and parts[index - 1] in ("，", ",")
+            and category_of(clauses[-1]) == "preference"
+            and "先" in clauses[-1]
+            and re.match(r"再(?:看|读|做|练习)", clause)
+        ):
+            clauses[-1] += parts[index - 1] + parts[index]
+        else:
+            clauses.append(clause)
+    return clauses
 
 
 def mixed_todo_content(content: str) -> str | None:
@@ -178,7 +196,8 @@ def category_of(clause: str) -> str | None:
             else None
         )
     if re.match(
-        r"(?:我|以后)(?:更|通常|一般|一直|比较)?(?:喜欢|偏好|习惯|优先|不喜欢|不爱|倾向)",
+        r"(?:我|以后)(?:(?:看|阅读|学习)(?:技术)?(?:资料|文档|教程))?"
+        r"(?:更|通常|一般|一直|比较)?(?:喜欢|偏好|习惯|优先|不喜欢|不爱|倾向)",
         clause,
     ):
         return "preference"

@@ -156,9 +156,14 @@ def weather_app(
     )
 
 
-def test_weather_uses_destination_date_and_returns_evidence_without_writes(tmp_path):
+@pytest.mark.parametrize(
+    "host", ["test.qweatherapi.com", "h2a9cf3mhs.xy.qweatherapi.com"]
+)
+def test_weather_uses_destination_date_and_returns_evidence_without_writes(
+    tmp_path, host
+):
     requests = []
-    with TestClient(weather_app(tmp_path, requests)) as c:
+    with TestClient(weather_app(tmp_path, requests, qweather_api_host=host)) as c:
         before = c.get("/api/todos").json()
         run, events = submit(c, "查询明天上海天气，出门要准备什么？")
         assert run["status"] == "completed"
@@ -171,6 +176,7 @@ def test_weather_uses_destination_date_and_returns_evidence_without_writes(tmp_p
         assert "event: terminal" in events and '"tool": "qweather_daily"' in events
         assert c.get("/api/todos").json() == before
         external = [r for r in requests if r.method == "GET"]
+        assert all(r.url.host == host for r in external)
         assert [r.url.path for r in external] == [
             "/geo/v2/city/lookup",
             "/weather/v1/daily/31.23/121.47",
@@ -180,6 +186,23 @@ def test_weather_uses_destination_date_and_returns_evidence_without_writes(tmp_p
             "range" not in r.url.params and "key" not in r.url.params for r in external
         )
         assert "weather-only" not in events + json.dumps(run)
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "test.qweatherapi.com.example.org",
+        "test.qweatherapi.com@example.org",
+        "https://test.qweatherapi.com",
+        "test.qweatherapi.com/path",
+        "test..qweatherapi.com",
+    ],
+)
+def test_invalid_weather_host_is_rejected_before_sending_credentials(tmp_path, host):
+    requests = []
+    with pytest.raises(ValueError, match="和风 API Host"):
+        weather_app(tmp_path, requests, qweather_api_host=host)
+    assert requests == []
 
 
 @pytest.mark.parametrize(

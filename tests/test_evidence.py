@@ -16,6 +16,9 @@ from tests.test_memory import memory_client
     [
         "我喜欢优先阅读官方资料，今天我要学习 Python 生成器？",
         "我喜欢优先阅读官方资料但不要保存待办，今天我要学习 Python 生成器",
+        "我看技术资料喜欢先看官方文档，再做一个小练习。今天我要学 Python 生成器？",
+        "我看技术资料喜欢先看官方文档，再做一个小练习，但不要保存待办。"
+        "今天我要学 Python 生成器。",
     ],
 )
 def test_mixed_statement_preserves_full_write_authorization(tmp_path, content):
@@ -86,7 +89,24 @@ def test_current_source_request_overrides_preference_without_rewriting_it(tmp_pa
         assert "我喜欢优先阅读官方资料" in later["research"]["task"]["query"]
 
 
-def test_ordinary_preference_and_independent_learning_task_both_commit(tmp_path):
+@pytest.mark.parametrize(
+    ("content", "preference", "title"),
+    [
+        (
+            "我喜欢优先阅读官方资料，今天我要学习 Python 生成器",
+            "我喜欢优先阅读官方资料",
+            "学习 Python 生成器",
+        ),
+        (
+            "我看技术资料喜欢先看官方文档，再做一个小练习。今天我要学 Python 生成器。",
+            "我看技术资料喜欢先看官方文档，再做一个小练习",
+            "学 Python 生成器",
+        ),
+    ],
+)
+def test_ordinary_preference_and_independent_learning_task_both_commit(
+    tmp_path, content, preference, title
+):
     import json
 
     import httpx
@@ -110,9 +130,7 @@ def test_ordinary_preference_and_independent_learning_task_both_commit(tmp_path)
                                 "content": json.dumps(
                                     {
                                         "candidates": [
-                                            candidate(
-                                                source, content="我喜欢优先阅读官方资料"
-                                            )
+                                            candidate(source, content=preference)
                                         ]
                                     }
                                 )
@@ -123,13 +141,17 @@ def test_ordinary_preference_and_independent_learning_task_both_commit(tmp_path)
             )
         tool = body["tool_choice"]
         if tool == "auto":
+            memories = json.loads(body["messages"][1]["content"])["memories"]
             return httpx.Response(
                 200,
                 json=operation_response(
                     "answer_question",
                     {
                         "reply": "可以查找学习资料。",
-                        "memory_usage": [],
+                        "memory_usage": [
+                            {"memory_id": m["id"], "reason": "参考资料偏好"}
+                            for m in memories
+                        ],
                     },
                 ),
             )
@@ -139,7 +161,7 @@ def test_ordinary_preference_and_independent_learning_task_both_commit(tmp_path)
             json=operation_response(
                 "create_todos",
                 {
-                    "items": [{"title": "学习 Python 生成器", "date_text": "今天"}],
+                    "items": [{"title": title, "date_text": "今天"}],
                 },
             ),
         )
@@ -154,10 +176,48 @@ def test_ordinary_preference_and_independent_learning_task_both_commit(tmp_path)
             transport=httpx.MockTransport(provider),
         )
     ) as c:
-        run, _ = submit(c, "我喜欢优先阅读官方资料，今天我要学习 Python 生成器")
-        assert len(c.get("/api/memories").json()) == 1
-        assert c.get("/api/todos").json()[0]["title"] == "学习 Python 生成器"
+        run, events = submit(c, content)
+        memories = c.get("/api/memories").json()
+        assert len(memories) == 1
+        assert memories[0]["content"] == preference
+        assert memories[0]["source"]["content"] == content
+        assert c.get("/api/todos").json()[0]["title"] == title
         assert run["status"] == "completed"
+        assert "event: memory_saved" in events and "event: saved" in events
+        later, _ = submit(c, "Python 装饰器有什么资料可以看？", "transfer")
+        assert later["session_id"] != run["session_id"]
+        assert later["memory"]["loaded"][0]["content"] == preference
+        assert later["memory"]["usage"][0]["memory_id"] == memories[0]["id"]
+
+
+@pytest.mark.parametrize(
+    "content, proposed",
+    [
+        (
+            "我看技术资料喜欢先看官方文档，再做一个小练习",
+            "我看技术资料喜欢先看官方文档",
+        ),
+        (
+            "我看技术资料喜欢先看官方文档，再做一个小练习，但仅限今天",
+            "我看技术资料喜欢先看官方文档，再做一个小练习",
+        ),
+        (
+            "网页说：我看技术资料喜欢先看官方文档，再做一个小练习",
+            "我看技术资料喜欢先看官方文档，再做一个小练习",
+        ),
+    ],
+)
+def test_ordered_preference_cannot_drop_steps_scope_or_quoted_origin(
+    tmp_path, content, proposed
+):
+    from tests.test_memory import candidate
+
+    with memory_client(
+        tmp_path, extract=lambda source: [candidate(source, content=proposed)]
+    ) as c:
+        _, events = submit(c, content)
+        assert c.get("/api/memories").json() == []
+        assert "event: memory_saved" not in events
 
 
 def test_model_call_evidence_reports_mode_usage_and_failure_without_secrets(tmp_path):
