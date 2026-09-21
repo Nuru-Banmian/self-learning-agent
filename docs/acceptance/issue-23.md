@@ -37,4 +37,4 @@
 - Ruff、格式、mypy、前端 TypeScript/Vite 构建及差异检查通过。首轮全量 **280 passed**；包含最终否定表达修复的全量 **283 passed**（124.12 秒），两条既有弃用警告。
 - 真实服务第二次完整复验在路线组织阶段返回 partial 且没有路线，脚本因此失败，尚未进入排期；记录 `output/issue23/live/61ab6bcf0b/results.json`，不能称为排期通过。随后将首次真实路线数据库备份到新的隔离库，运行 `python -m tests.live_roadmap_schedule --saved-db output/issue23/live/054fc8b7e8/live.db`；真实模型正确处理带引号路线名和“每天1小时30分钟”（90 分钟），确认同步与重新打开读回通过。证据 `output/issue23/live/df7167e1f6/results.json`，此轮没有重新调用 IQS。
 
-仅在当前 `main` 本地提交，不推送或关闭 Issue。任务开始前已有的 `CONTEXT.md`、`HANDOFF.md` 和 `docs/plans/` 改动保留，不纳入本次提交。
+实现阶段仅在当前 `main` 本地提交；用户随后明确授权上传 PR、合并并关闭 Issue #23，发布按此后续授权执行。任务开始前已有的 `CONTEXT.md`、`HANDOFF.md` 和 `docs/plans/` 改动保留，不纳入本次提交。
