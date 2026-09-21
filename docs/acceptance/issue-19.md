@@ -117,6 +117,8 @@ npx --yes --package @playwright/cli playwright-cli -s=issue19-check run-code $br
 
 ## 最终检查与双轴审查
 
-最终全量及审查结果待本轮最终输出回填。固定基线始终为 `8878ff9`，不使用不断移动的 main 作为基线。双轴由独立 Standards 与 Spec agent 审查，审查修改后再次复核。
+最终全量 **220 passed，2 warnings，77.53 秒**，`output/issue19/final-full-suite.txt`；mypy 检查 16 个源文件通过；Ruff check 通过，format check 70 个文件通过；前端 TypeScript/Vite build 通过；`git diff --check` 通过。初访浏览器脚本通过，受保护文件哈希与接手时一致。
 
-截至 `96aba41`：Standards 0 项；Spec 2 项 P2。`c9fd124` 关闭直接记录与两工具否定问题，正向意图仍有一处同根遗漏；`d8cb202` 统一正向入口并通过 31 项路线回归。验收文档不把尚未返回的最终审查写成零问题。
+双轴固定审查 `8878ff9...8654fc2`，不使用不断移动的 main 作为基线。Standards 最终 **0 项可操作发现**，只读审查代码、项目规范及文档，未独立重跑测试。Spec 最终 **0 项剩余可操作发现**，独立重跑路线测试 **31 passed，2 warnings**，并核对真实原始记录、升级结果、浏览器及全量日志。
+
+历史：截至 `96aba41`，Standards 0 项、Spec 2 项 P2；`c9fd124` 关闭直接记录问题并补两工具否定保护，正向意图仍有同根遗漏；`d8cb202` 统一正向入口。Spec 最终确认原两项 P2 均关闭。双轴无剩余代码发现不等于真实资料/练习质量全绿；上文 partial 和未验证边界保持不变。本段是审查后回填结果，未改应用代码。
