@@ -9,11 +9,14 @@ import httpx
 
 from app.main import create_app
 from app.settings import Settings
+from tests.test_roadmap_batch import batch_provider
 from tests.test_roadmaps import roadmap_provider
 
 
 def create_demo_app():
-    base = roadmap_provider([])
+    base = (
+        batch_provider if os.environ.get("ROADMAP_BATCH_DEMO") else roadmap_provider([])
+    )
 
     async def provider(request):
         body = json.loads(request.content)

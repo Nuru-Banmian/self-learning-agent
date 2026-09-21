@@ -42,6 +42,15 @@ class NodeSelection(BaseModel):
     expected_version: int = Field(ge=1)
 
 
+class NodesSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    roadmap_id: str = Field(min_length=1, max_length=100)
+    node_ids: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(
+        max_length=8
+    )
+    expected_version: int = Field(ge=1)
+
+
 def chat_selection(store: Store, content: str) -> NodeSelection | None:
     match = re.fullmatch(
         r"(?:请)?(?:把|将)\s*节点\s*(.+?)\s*(?:加入待办|加进去)[。！!]?",
@@ -69,6 +78,38 @@ def chat_selection(store: Store, content: str) -> NodeSelection | None:
             "当前目标不明确，未新增。"
         )
     return targets[0]
+
+
+def chat_batch_selection(store: Store, content: str) -> NodesSelection | None:
+    match = re.fullmatch(
+        r"(?:请)?(?:把|将)\s*(?:学习)?路线\s*(.*?)\s*全部(?:加入待办|加进去)[。！!]?",
+        content.strip(),
+    )
+    if match:
+        targets = [
+            r for r in store.roadmaps() if match[1].strip() in (r["id"], r["title"])
+        ]
+        if len(targets) == 1:
+            route = store.roadmap(targets[0]["id"])
+            assert route is not None
+            return NodesSelection(
+                roadmap_id=route["id"],
+                node_ids=[n["id"] for n in route["nodes"]],
+                expected_version=route["version"],
+            )
+    # Route references must never fall through to ordinary suggestion authorization.
+    if match or (
+        not has_roadmap_request(unquoted_request(content))
+        and re.search(
+            r"(?:路线|节点).*?(?:加入待办|加进去)|(?:加入待办|加进去).*?(?:路线|节点)",
+            content,
+        )
+    ):
+        raise Clarification(
+            "路线或节点目标不明确，未新增。请在路线面板全选或勾选部分节点后确认；"
+            "也可说‘把路线 完整标识 全部加入待办’。"
+        )
+    return None
 
 
 def unquoted_request(content: str) -> str:
@@ -238,7 +279,7 @@ def finish_roadmap(
                 f"资料：{', '.join(node.source_ids)}\n候选待办：{node.todo_title}\n"
             )
         reply += (
-            "\n路线已保存。是否加入待办？请在路线面板选择一个节点加入，"
+            "\n路线已保存。是否加入待办？请在路线面板全选或选择部分节点后确认，"
             "也可暂不加入。默认未安排日期。"
         )
     else:

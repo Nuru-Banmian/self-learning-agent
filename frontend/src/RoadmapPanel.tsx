@@ -17,6 +17,7 @@ type Node = {
   todo_title: string;
   source_ids: string[];
   todo_id: string | null;
+  status?: string;
   todo: { title: string; scheduled_date: string | null; status: string } | null;
 };
 type Roadmap = RoadmapSummary & {
@@ -34,7 +35,7 @@ type Roadmap = RoadmapSummary & {
   }[];
 };
 export type RoadmapAction = {
-  tool: "accept_roadmap_node";
+  tool: "accept_roadmap_nodes";
   arguments: Record<string, unknown>;
 };
 
@@ -56,6 +57,7 @@ export function RoadmapPanel({
   const [route, setRoute] = useState<Roadmap | null>(null);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
+  const [checked, setChecked] = useState<string[]>([]);
   useEffect(() => {
     const changed = () => setSelection(hashSelection());
     window.addEventListener("hashchange", changed);
@@ -65,6 +67,7 @@ export function RoadmapPanel({
     let cancelled = false;
     setRoute(null);
     setError("");
+    setChecked([]);
     if (selection.id) {
       fetch(`/api/roadmaps/${selection.id}`)
         .then(async (response) => {
@@ -88,6 +91,11 @@ export function RoadmapPanel({
         .getElementById(`node-${selection.node}`)
         ?.scrollIntoView({ block: "center" });
   }, [route, selection.node]);
+  const eligible =
+    route?.nodes.filter(
+      (node) => !node.todo_id && node.status !== "completed",
+    ) || [];
+  const pending = eligible.filter((node) => checked.includes(node.id));
   return (
     <section
       className="suggestions roadmaps"
@@ -96,7 +104,7 @@ export function RoadmapPanel({
     >
       <h2>学习路线</h2>
       <p className="list-note">
-        跨会话保存 · 每个节点可单独加入待办 · 默认未安排日期
+        跨会话保存 · 可全选或选择部分节点加入待办 · 默认未安排日期
       </p>
       {!roadmaps.length && (
         <p>说出想学的主题、基础与目标，生成有资料来源的路线。</p>
@@ -133,6 +141,57 @@ export function RoadmapPanel({
           <a href="#learning-roadmaps" className="roadmap-link">
             暂不加入（保留路线）
           </a>
+          <div className="roadmap-actions">
+            <button
+              disabled={disabled || !eligible.length}
+              onClick={() => setChecked(eligible.map((node) => node.id))}
+            >
+              全部选择未加入节点
+            </button>
+            <button
+              disabled={disabled || !checked.length}
+              onClick={() => setChecked([])}
+            >
+              清空选择
+            </button>
+          </div>
+          <section
+            className="roadmap-confirmation"
+            aria-label="确认加入清单"
+            aria-live="polite"
+          >
+            <p>本次待新增 {pending.length} 项 · 默认未安排日期</p>
+            {pending.length ? (
+              <ul>
+                {pending.map((node) => (
+                  <li key={node.id}>{node.todo_title}</li>
+                ))}
+              </ul>
+            ) : (
+              <p>请先选择节点；空选择不会新增待办。</p>
+            )}
+            <p>
+              已加入或已完成的节点会跳过。其他页面先行加入时，以提交结果为准。
+            </p>
+            <button
+              disabled={disabled || !pending.length}
+              onClick={() =>
+                act(
+                  `确认加入路线「${route.title}」的 ${pending.length} 个所选节点`,
+                  {
+                    tool: "accept_roadmap_nodes",
+                    arguments: {
+                      roadmap_id: route.id,
+                      node_ids: pending.map((node) => node.id),
+                      expected_version: route.version,
+                    },
+                  },
+                )
+              }
+            >
+              确认加入所选 {pending.length} 项
+            </button>
+          </section>
           {route.nodes.map((node) => (
             <section
               key={node.id}
@@ -181,22 +240,27 @@ export function RoadmapPanel({
                   )
                 );
               })}
-              <button
-                className="quiet"
-                disabled={disabled || !!node.todo_id}
-                onClick={() =>
-                  act(`把节点 ${node.id} 加入待办`, {
-                    tool: "accept_roadmap_node",
-                    arguments: {
-                      roadmap_id: route.id,
-                      node_id: node.id,
-                      expected_version: route.version,
-                    },
-                  })
-                }
-              >
-                {node.todo_id ? "已加入待办" : "将此节点加入待办"}
-              </button>
+              <label>
+                <input
+                  type="checkbox"
+                  disabled={
+                    disabled || !!node.todo_id || node.status === "completed"
+                  }
+                  checked={checked.includes(node.id)}
+                  onChange={(event) =>
+                    setChecked((previous) =>
+                      event.target.checked
+                        ? [...previous, node.id]
+                        : previous.filter((id) => id !== node.id),
+                    )
+                  }
+                />
+                {node.todo_id
+                  ? "已加入待办"
+                  : node.status === "completed"
+                    ? "已完成，跳过"
+                    : `选择节点 ${node.position}：${node.todo_title}`}
+              </label>
               <details>
                 <summary>节点标识</summary>
                 <small>{node.id}</small>

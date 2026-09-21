@@ -6,6 +6,7 @@ import pytest
 
 from tests.test_maintenance import action
 from tests.test_process import free_port, server_process
+from tests.test_roadmap_batch import selection
 from tests.test_roadmaps import REQUEST
 
 
@@ -96,3 +97,82 @@ def test_process_death_recovers_roadmap_and_acceptance_atomically(
             c.get(f"/api/roadmaps/{route['id']}").json()["nodes"][0]["todo_id"]
             == accepted["todo_ids"][0]
         )
+
+
+@pytest.mark.parametrize("after_commit", [False, True])
+def test_batch_acceptance_process_death_and_sse_replay(tmp_path, after_commit):
+    port, database = free_port(), tmp_path / "batch-restart.db"
+    gate = tmp_path / "release"
+    gate.touch()
+    options = {
+        "factory": "tests.roadmap_demo:create_demo_app",
+        "extra_env": {"ROADMAP_PROVIDER_GATE": str(gate), "ROADMAP_BATCH_DEMO": "1"},
+    }
+    with server_process(port, database, "http://fixture.invalid/v1", **options) as (
+        c,
+        process,
+    ):
+        session = c.post("/api/sessions").json()["id"]
+        c.post(
+            f"/api/sessions/{session}/messages",
+            json={"request_id": "route", "content": REQUEST},
+        ).raise_for_status()
+        c.get("/api/runs/route/events")
+        route = c.get("/api/runs/route").json()["roadmap"]
+        args = selection(route)
+        if not after_commit:
+            # Keep a preceding request at the external provider boundary, so the
+            # accepted batch is durably queued but cannot commit before the kill.
+            gate.unlink()
+            c.post(
+                f"/api/sessions/{session}/messages",
+                json={"request_id": "blocked", "content": REQUEST},
+            ).raise_for_status()
+        body = {
+            "request_id": "batch",
+            "content": "确认全部加入",
+            "action": {"tool": "accept_roadmap_nodes", "arguments": args},
+        }
+        c.post(f"/api/sessions/{session}/messages", json=body).raise_for_status()
+        if after_commit:
+            # Disconnect immediately after the committed acceptance event, without
+            # waiting for the terminal event, then really kill the process.
+            with c.stream("GET", "/api/runs/batch/events") as stream:
+                for line in stream.iter_lines():
+                    if line == "event: roadmap_nodes_accepted":
+                        break
+                else:
+                    raise AssertionError("missing batch acceptance event")
+        else:
+            assert c.get("/api/runs/batch").json()["status"] == "queued"
+        process.kill()
+        process.wait(5)
+    gate.touch()
+    with server_process(port, database, "http://fixture.invalid/v1", **options) as (
+        c,
+        restarted,
+    ):
+        assert restarted.pid != process.pid
+        original = c.get("/api/runs/batch").json()
+        assert len(c.get("/api/todos").json()) == (3 if after_commit else 0)
+        assert original["status"] == ("completed" if after_commit else "failed")
+        assert c.post(f"/api/sessions/{session}/messages", json=body).json() == original
+        retry = c.post("/api/runs/batch/retry").json()
+        c.get(f"/api/runs/{retry['id']}/events")
+        done = c.get(f"/api/runs/{retry['id']}").json()
+        assert done["status"] == "completed"
+        assert "本次新增 3" in done["reply"]
+        saved = next(e for e in done["events"] if e["kind"] == "roadmap_nodes_accepted")
+        assert [r["status"] for r in saved["data"]["results"]] == ["created"] * 3
+        events = c.get(
+            f"/api/runs/{done['id']}/events",
+            headers={"Last-Event-ID": str(saved["seq"])},
+        ).text
+        assert (
+            "event: roadmap_nodes_accepted" not in events
+            and "event: terminal" in events
+        )
+        other = c.post("/api/sessions").json()["id"]
+        repeated, _ = action(c, other, "again", "accept_roadmap_nodes", args)
+        assert "本次新增 0" in repeated["reply"]
+        assert len(c.get("/api/todos").json()) == 3

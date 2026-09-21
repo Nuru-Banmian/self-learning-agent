@@ -91,29 +91,50 @@ def accept_node(
     run: sqlite3.Row,
     target: dict[str, Any],
 ) -> tuple[dict[str, Any], str, bool]:
+    route, results = accept_nodes(db, run, target | {"node_ids": [target["node_id"]]})
+    result = results[0]
+    return route, result["todo_id"], result["status"] == "created"
+
+
+def accept_nodes(
+    db: sqlite3.Connection,
+    run: sqlite3.Row,
+    target: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    # Caller owns BEGIN IMMEDIATE: selection, writes and run evidence commit together.
     route = read(db, target["roadmap_id"])
     if route is None:
         raise Clarification("路线不存在，请刷新后重新选择；未新增待办。")
-    node = next((n for n in route["nodes"] if n["id"] == target["node_id"]), None)
-    if node is None:
+    selected = set(target["node_ids"])
+    if not selected <= {n["id"] for n in route["nodes"]}:
         raise Clarification("节点不属于此路线，请重新选择；未新增待办。")
-    if node["todo_id"]:
-        return route, node["todo_id"], False
-    if route["version"] != target["expected_version"]:
+    nodes = [n for n in route["nodes"] if n["id"] in selected]
+    pending = [n for n in nodes if not n["todo_id"] and n.get("status") != "completed"]
+    if pending and route["version"] != target["expected_version"]:
         raise Clarification("路线已变化，请刷新后重新选择；未新增待办。")
-    todo_id = str(uuid4())
-    db.execute(
-        "INSERT INTO todos VALUES(?,?,NULL,'pending',?,?,?)",
-        (
-            todo_id,
-            node["todo_title"],
-            run["message_id"],
-            run["received_at"],
-            run["received_at"],
-        ),
-    )
-    db.execute("UPDATE roadmap_nodes SET todo_id=? WHERE id=?", (todo_id, node["id"]))
-    db.execute("UPDATE roadmaps SET version=version+1 WHERE id=?", (route["id"],))
+    results = []
+    for node in nodes:
+        todo_id = node["todo_id"]
+        state = "already_added" if todo_id else "completed"
+        if node in pending:
+            todo_id = str(uuid4())
+            db.execute(
+                "INSERT INTO todos VALUES(?,?,NULL,'pending',?,?,?)",
+                (
+                    todo_id,
+                    node["todo_title"],
+                    run["message_id"],
+                    run["received_at"],
+                    run["received_at"],
+                ),
+            )
+            db.execute(
+                "UPDATE roadmap_nodes SET todo_id=? WHERE id=?", (todo_id, node["id"])
+            )
+            state = "created"
+        results.append({"node_id": node["id"], "todo_id": todo_id, "status": state})
+    if pending:
+        db.execute("UPDATE roadmaps SET version=version+1 WHERE id=?", (route["id"],))
     current = read(db, route["id"])
     assert current is not None
-    return current, todo_id, True
+    return current, results
