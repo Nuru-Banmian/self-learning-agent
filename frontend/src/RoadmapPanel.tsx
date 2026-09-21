@@ -1,6 +1,8 @@
 import { RevisionPanel, type RevisionProposal } from "./RevisionPanel";
 import { useEffect, useState } from "react";
 import { SchedulePanel, type ScheduleProposal } from "./SchedulePanel";
+import { RoadmapNode } from "./RoadmapNode";
+import "./roadmap-panel.css";
 
 export type RoadmapSummary = {
   id: string;
@@ -8,11 +10,14 @@ export type RoadmapSummary = {
   goal: string;
   version: number;
   status: string;
+  display_title?: string;
 };
 export type Node = {
   id: string;
   position: number;
   goal: string;
+  display_title?: string;
+  display_goal?: string;
   estimated_minutes: number;
   exercise: string;
   completion_criteria: string;
@@ -99,10 +104,13 @@ export function RoadmapPanel({
     };
   }, [selection.id, roadmaps, reload]);
   useEffect(() => {
-    if (route && selection.node)
-      document
-        .getElementById(`node-${selection.node}`)
-        ?.scrollIntoView({ block: "center" });
+    if (route && selection.node) {
+      const node = document.getElementById(`node-${selection.node}`);
+      const history = node?.closest<HTMLDetailsElement>(".roadmap-history");
+      if (history) history.open = true;
+      node?.scrollIntoView({ block: "center" });
+      node?.focus({ preventScroll: true });
+    }
   }, [route, selection.node]);
   const eligible =
     route?.nodes.filter(
@@ -124,7 +132,7 @@ export function RoadmapPanel({
       )}
       <nav aria-label="路线列表">
         {roadmaps.map((r) => (
-          <a key={r.id} href={`#roadmap-${r.id}`} className="roadmap-link">
+          <a key={r.id} href={`#roadmap-${r.id}`} className="roadmap-link" aria-current={selection.id === r.id ? "location" : undefined}>
             查看路线：{r.title}（
             {r.status === "partial" ? "部分结果" : "资料已取得"}）
           </a>
@@ -139,7 +147,7 @@ export function RoadmapPanel({
       {selection.id && !route && !error && <p>正在读取路线…</p>}
       {route && (
         <article aria-label="路线详情">
-          <h3>{route.title}</h3>
+          <h3>{route.display_title || route.title}</h3>
           <p>目标：{route.goal}</p>
           <p role="status">
             学习进度：已完成 {route.progress.completed} / {route.progress.total}，
@@ -149,14 +157,16 @@ export function RoadmapPanel({
             <summary>原始学习需求</summary>
             <p>{route.request}</p>
           </details>
-          {route.gaps.map((gap, i) => (
-            <p className="error" key={i}>
-              {gap}
-            </p>
-          ))}
-          <RevisionPanel key={`${route.id}-${route.version}`} route={route} disabled={disabled} act={act} />
-          <SchedulePanel key={route.id} route={route} disabled={disabled} act={act} />
-          <p>是否将节点加入待办？预计耗时仅供参考。</p>
+          {(route.status === "partial" || route.gaps.length > 0) && (
+            <div className="roadmap-limitations" role="status">
+              <p>资料部分取得，可先查看已有路线；缺失内容仍待补充。</p>
+              <details>
+                <summary>查看资料缺口</summary>
+                {route.gaps.map((gap, i) => <p key={i}>{gap}</p>)}
+              </details>
+            </div>
+          )}
+          <p>勾选想做的节点，确认后加入待办。</p>
           <a href="#learning-roadmaps" className="roadmap-link">
             暂不加入（保留路线）
           </a>
@@ -174,6 +184,15 @@ export function RoadmapPanel({
               清空选择
             </button>
           </div>
+          <ol className="roadmap-nodes" aria-label="当前路线节点">
+            {route.nodes.map((node) => (
+              <li key={node.id}>
+                <RoadmapNode node={node} route={route} disabled={disabled} checked={checked.includes(node.id)}
+                  onCheck={(value) => setChecked(previous => value ? [...previous, node.id] : previous.filter(id => id !== node.id))}
+                  act={act} />
+              </li>
+            ))}
+          </ol>
           <section
             className="roadmap-confirmation"
             aria-label="确认加入清单"
@@ -211,106 +230,20 @@ export function RoadmapPanel({
               确认加入所选 {pending.length} 项
             </button>
           </section>
-          {[...route.nodes, ...route.history_nodes].map((node) => (
-            <section
-              key={node.id}
-              id={`node-${node.id}`}
-              className="suggestion"
-              aria-label={node.position < 0 ? `历史节点 ${node.goal}` : `节点 ${node.position}`}
-            >
-              <h4>
-                {node.position < 0 ? "历史节点（保留关联与记录）" : `${node.position}.`} {node.goal}
-              </h4>
-              <p>预计 {node.estimated_minutes} 分钟</p>
-              <p>当前节点安排：{node.scheduled_date || "未安排"}</p>
-              <p>练习：{node.exercise}</p>
-              <p>完成标准：{node.completion_criteria}</p>
-              <p>候选待办：{node.todo_title}</p>
-              <p>节点状态：{node.status === "completed" ? "已完成" : "待完成"}</p>
-              {node.completion && (
-                <details>
-                  <summary>完成记录 · {new Date(node.completion.completed_at).toLocaleString()}</summary>
-                  <p>{node.completion.operation === "mastered" ? "用户标记已掌握" : "关联待办完成"}</p>
-                  <p>操作依据：{node.completion.content}</p>
-                  <p>完成时目标：{node.completion.node.goal}</p>
-                  <p>完成时练习：{node.completion.node.exercise}</p>
-                  <p>完成时标准：{node.completion.node.completion_criteria}</p>
-                </details>
-              )}
-              {node.todo && (
-                <p>
-                  当前待办：{node.todo.title} ·{" "}
-                  {node.todo.scheduled_date || "未安排"} ·{" "}
-                  {node.todo.status === "completed" ? "已完成" : "待完成"}
-                </p>
-              )}
-              {node.source_ids.map((id) => {
-                const source = route.sources.find((s) => s.id === id);
-                return (
-                  source && (
-                    <details key={id}>
-                      <summary>
-                        资料 [{id}] {source.title} ·{" "}
-                        {source.material_type === "body"
-                          ? "已取得正文"
-                          : "仅搜索摘要"}
-                      </summary>
-                      <a href={source.url} target="_blank" rel="noreferrer">
-                        {source.title}
-                      </a>
-                      <p>搜索摘要：{source.snippet}</p>
-                      {source.body ? (
-                        <p className="source-body">
-                          正文{source.body_truncated ? "（截取片段）" : ""}：
-                          {source.body}
-                        </p>
-                      ) : (
-                        <p>未读取正文</p>
-                      )}
-                    </details>
-                  )
-                );
-              })}
-              <label>
-                <input
-                  type="checkbox"
-                  disabled={
-                    disabled || node.position < 0 || !!node.todo_id || node.status === "completed"
-                  }
-                  checked={checked.includes(node.id)}
-                  onChange={(event) =>
-                    setChecked((previous) =>
-                      event.target.checked
-                        ? [...previous, node.id]
-                        : previous.filter((id) => id !== node.id),
-                    )
-                  }
-                />
-                {node.todo_id
-                  ? "已加入待办"
-                  : node.status === "completed"
-                    ? "已完成，跳过"
-                    : `选择节点 ${node.position}：${node.todo_title}`}
-              </label>
-              <details>
-                <summary>节点标识</summary>
-                <small>{node.id}</small>
-              </details>
-              <button
-                disabled={disabled || node.position < 0 || node.status === "completed"}
-                onClick={() => act(`将节点「${node.goal}」标记为已掌握`, {
-                  tool: "complete_roadmap_node",
-                  arguments: {
-                    roadmap_id: route.id,
-                    node_id: node.id,
-                    expected_version: route.version,
-                  },
-                })}
-              >
-                标记已掌握{node.todo_id ? "（同步完成待办）" : "（不创建待办）"}
-              </button>
-            </section>
-          ))}
+          <details className="roadmap-tools" key={`${route.id}-${route.version}-revision`}>
+            <summary>调整学习路线{route.revision_proposals.some(proposal => proposal.status === "pending") ? " · 有待确认方案" : ""}</summary>
+            <RevisionPanel route={route} disabled={disabled} act={act} />
+          </details>
+          <details className="roadmap-tools" key={`${route.id}-schedule`}>
+            <summary>按需排期{route.schedule_proposals.some(proposal => proposal.status === "pending") ? " · 有待确认方案" : ""}</summary>
+            <SchedulePanel route={route} disabled={disabled} act={act} />
+          </details>
+          {route.history_nodes.length > 0 && (
+            <details className="roadmap-history" key={`${route.id}-history`}>
+              <summary>历史节点与记录 · {route.history_nodes.length} 项</summary>
+              {route.history_nodes.map(node => <RoadmapNode key={node.id} node={node} route={route} disabled={disabled} checked={false} onCheck={() => {}} act={act} />)}
+            </details>
+          )}
         </article>
       )}
     </section>

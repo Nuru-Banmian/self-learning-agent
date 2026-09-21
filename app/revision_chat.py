@@ -225,8 +225,8 @@ async def generate(
             store.finish(
                 run["id"],
                 "partial",
-                "未取得新资料，尚未生成调整方案；当前路线和待办保持原状。\n"
-                + "\n".join(gaps),
+                "未取得新资料，尚未生成调整方案；当前路线和待办保持原状。"
+                "请展开资料记录查看限制。",
             )
             return
     context["sources"] = route["sources"] + sources
@@ -245,6 +245,7 @@ async def generate(
             "已完成节点的原有内容、耗时、资料、标题、日期逐字保留；可移入历史（不列入输出）。"
             "移出的节点不列入输出，应用后会保留历史与待办。新增候选不自动加入待办。"
             "每个节点包含具体目标、耗时、实际source_ids、可执行练习和可检查完成标准。"
+            "display_title和display_goal用于简短清单：保留关键动作的一句目标，不含代码或资料元信息。"
             "未涉及的节点原样保留。修改节点时目标、练习、完成标准和候选待办标题必须互相对应，不保留已不适用的旧标题。"
             "修改前核对后续练习依赖的变量初始化、文件和环境准备；"
             "若原节点负责这些准备，修改节点仍应给出必要准备，不能只替换操作而丢掉先修步骤。"
@@ -267,7 +268,7 @@ async def generate(
                 not item
                 or item[0] != node["position"]
                 or any(
-                    node[k] != v
+                    node.get(k, "") != v
                     for k, v in item[1].model_dump(exclude={"node_id"}).items()
                 )
             ):

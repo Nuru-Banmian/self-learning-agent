@@ -1,19 +1,22 @@
-import { LearningRequestPanel, type LearningRequest } from "./LearningRequestPanel";
+import {
+  LearningRequestPanel,
+  type LearningRequest,
+} from "./LearningRequestPanel";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 import { WeatherPanel, type WeatherEvidence } from "./WeatherPanel";
 import { EvidencePanel } from "./EvidencePanel";
 import { RoadmapPanel, type RoadmapSummary } from "./RoadmapPanel";
+import { TodoPanel, TodoOverview, type Todo, type Overview } from "./TodoPanel";
 
-type Message = { id: string; role: string; content: string };
-type Todo = {
+type RoadmapLink = { roadmap_id: string; node_id?: string | null; title: string };
+type Message = {
   id: string;
-  title: string;
-  scheduled_date: string | null;
-  status: string;
-  source: { content: string; message_id: string; session_id: string };
-  roadmap: { id: string; node_id: string } | null;
+  role: string;
+  content: string;
+  roadmap_links?: RoadmapLink[];
+  roadmap_context?: boolean;
 };
 type Memory = {
   id: string;
@@ -52,6 +55,8 @@ type Run = {
   memory: MemoryEvidence;
   research: ResearchEvidence;
   weather: WeatherEvidence;
+  roadmap_links?: RoadmapLink[];
+  roadmap_context?: boolean;
 };
 type ResearchEvidence = {
   status?: string;
@@ -81,9 +86,18 @@ const researchStatuses: Record<string, string> = {
   error: "失败",
 };
 
-function ResearchPanel({ research }: { research: ResearchEvidence | null }) {
+function RoadmapLinks({ links, className = "message-roadmap-links" }: { links?: RoadmapLink[]; className?: string }) {
+  if (!links?.length) return null;
+  return <nav className={className} aria-label="本次路线">
+    {links.map(link => <a key={`${link.roadmap_id}-${link.node_id || ""}`} href={`#roadmap-${link.roadmap_id}${link.node_id ? `/${link.node_id}` : ""}`}>
+      {link.node_id ? "打开这个节点" : "打开这条路线"}：{link.title} ↗
+    </a>)}
+  </nav>;
+}
+
+function ResearchPanel({ research, collapsed = false }: { research: ResearchEvidence | null; collapsed?: boolean }) {
   if (!research?.status) return null;
-  return (
+  const content = (
     <section className="suggestions research" aria-label="外部资料与执行记录">
       <h2>外部资料与执行记录</h2>
       <p>执行 Agent · {researchStatuses[research.status] || research.status}</p>
@@ -130,6 +144,10 @@ function ResearchPanel({ research }: { research: ResearchEvidence | null }) {
       </details>
     </section>
   );
+  return collapsed ? <details className="research-disclosure">
+    <summary>外部资料与执行记录 · {researchStatuses[research.status] || research.status}</summary>
+    {content}
+  </details> : content;
 }
 const memoryCategories: Record<string, string> = {
   preference: "持续偏好",
@@ -178,21 +196,12 @@ function runPhase(run: Run) {
   return run.error === "interrupted" ? "处理已中断" : "处理失败";
 }
 type Health = { model_configured: boolean; timezone: string };
-type Overview = { today: string; groups: Record<string, Todo[]> };
 type Suggestion = {
   id: string;
   title: string;
   scheduled_date: string;
   todo_id: string | null;
 };
-const groups: Record<string, string> = {
-  today: "今日未完成",
-  overdue: "逾期未完成",
-  unscheduled: "未安排",
-  upcoming: "未来安排",
-  completed: "已完成",
-};
-
 function MemoryEditor({
   memory,
   disabled,
@@ -381,113 +390,6 @@ function MemoryEditor({
   );
 }
 
-function TodoCard({
-  todo,
-  disabled,
-  act,
-}: {
-  todo: Todo;
-  disabled: boolean;
-  act: (content: string, action: Action) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [title, setTitle] = useState(todo.title);
-  const [date, setDate] = useState(todo.scheduled_date || "");
-  return (
-    <li>
-      <div className="todo-title">
-        <span className="checkbox">
-          {todo.status === "completed" ? "✓" : ""}
-        </span>
-        <h3>{todo.title}</h3>
-      </div>
-      <div className="meta">
-        <time>{todo.scheduled_date || "未安排"}</time>
-        <span>{todo.status === "completed" ? "已完成" : "待完成"}</span>
-      </div>
-      <div className="todo-actions">
-        <button
-          className="quiet"
-          disabled={disabled}
-          onClick={() => {
-            setTitle(todo.title);
-            setDate(todo.scheduled_date || "");
-            setEditing(!editing);
-          }}
-        >
-          编辑
-        </button>
-        {todo.status !== "completed" && (
-          <button
-            className="quiet"
-            disabled={disabled}
-            onClick={() =>
-              act(`完成待办：${todo.title}`, {
-                tool: "complete_todo",
-                arguments: { todo_id: todo.id },
-              })
-            }
-          >
-            标记完成
-          </button>
-        )}
-      </div>
-      {editing && (
-        <form
-          className="todo-editor"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const arguments_: Record<string, unknown> = { todo_id: todo.id };
-            if (title.trim() !== todo.title) arguments_.title = title.trim();
-            if (date !== (todo.scheduled_date || ""))
-              arguments_.date_text = date || null;
-            if (Object.keys(arguments_).length > 1)
-              act(
-                `修改待办：${todo.title} → ${title.trim()}，${date || "未安排"}`,
-                { tool: "update_todo", arguments: arguments_ },
-              );
-            setEditing(false);
-          }}
-        >
-          <label>
-            标题
-            <input
-              aria-label="待办标题"
-              required
-              maxLength={200}
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-            />
-          </label>
-          <label>
-            安排日期
-            <input
-              aria-label="安排日期"
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-            />
-          </label>
-          <small>清空日期后归入未安排</small>
-          <button className="primary" disabled={disabled || !title.trim()}>
-            保存修改
-          </button>
-        </form>
-      )}
-      <details>
-        <summary>查看来源与标识</summary>
-        <p>{todo.source.content}</p>
-        <small>
-          待办 {todo.id}
-          <br />
-          消息 {todo.source.message_id}
-        </small>
-      </details>
-      {todo.roadmap && <a href={`#roadmap-${todo.roadmap.id}/${todo.roadmap.node_id}`} className="roadmap-link">查看节点学习内容</a>}
-    </li>
-  );
-}
-
 class ApiError extends Error {
   constructor(
     message: string,
@@ -519,13 +421,67 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+type View = "chat" | "todos" | "learning" | "memory";
+const views: { id: View; label: string; href: string }[] = [
+  { id: "chat", label: "对话", href: "#chat" },
+  { id: "todos", label: "待办", href: "#todos" },
+  { id: "learning", label: "学习路线", href: "#learning-roadmaps" },
+  { id: "memory", label: "记忆", href: "#memory" },
+];
+function currentView(): View {
+  const hash = window.location.hash;
+  if (hash.startsWith("#roadmap-") || hash === "#learning-roadmaps")
+    return "learning";
+  if (hash === "#todos") return "todos";
+  if (hash === "#memory") return "memory";
+  return "chat";
+}
+
 function App() {
+  const [view, setView] = useState<View>(currentView);
+  const [todoFilter, setTodoFilter] = useState("pending");
+  const [todoViewKey, setTodoViewKey] = useState(0);
+  const executionHistory = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const changed = () => setView(currentView());
+    window.addEventListener("hashchange", changed);
+    return () => window.removeEventListener("hashchange", changed);
+  }, []);
+  function openTodos(filter = "pending") {
+    setTodoFilter(filter);
+    setTodoViewKey((key) => key + 1);
+    setView("todos");
+    window.location.hash = "todos";
+    window.requestAnimationFrame(() =>
+      document.getElementById("todos-heading")?.focus({ preventScroll: true }),
+    );
+  }
+  function draftMessage(content: string) {
+    setInput(content);
+    setView("chat");
+    window.location.hash = "chat";
+    window.requestAnimationFrame(() =>
+      document.getElementById("message")?.focus(),
+    );
+  }
+  function showRunResult(runId: string) {
+    setView("chat");
+    window.location.hash = "chat";
+    window.requestAnimationFrame(() => {
+      if (executionHistory.current) executionHistory.current.open = true;
+      const record = document.getElementById(`run-${runId}`);
+      record?.scrollIntoView({ block: "center" });
+      record?.focus({ preventScroll: true });
+    });
+  }
   const [session, setSession] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [learningRequests, setLearningRequests] = useState<LearningRequest[]>([]);
+  const [learningRequests, setLearningRequests] = useState<LearningRequest[]>(
+    [],
+  );
   const [roadmaps, setRoadmaps] = useState<RoadmapSummary[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -549,7 +505,14 @@ function App() {
     const isCurrent = () =>
       currentSession.current === id && refreshVersion.current === version;
     try {
-      const [data, summary, ideas, savedMemories, savedRoadmaps, savedRequests] = await Promise.all([
+      const [
+        data,
+        summary,
+        ideas,
+        savedMemories,
+        savedRoadmaps,
+        savedRequests,
+      ] = await Promise.all([
         api<{
           messages: Message[];
           latest_run_id: string | null;
@@ -837,9 +800,17 @@ function App() {
     };
   }, []);
 
+  const latestRun = runs.at(-1);
+  const learningOutcome = runs.filter(run => run.roadmap_context || run.roadmap_links?.length).at(-1);
+  const showLearningOutcome = learningOutcome && !activeRun(learningOutcome) && learningOutcome.status !== "completed";
+  const showRunOutcome =
+    latestRun &&
+    !activeRun(latestRun) &&
+    (latestRun.status !== "completed" || latestRun.action);
+
   return (
     <main>
-      <header>
+      <header className="app-header">
         <a className="brand" href="/">
           日常<span>生活助理</span>
         </a>
@@ -849,14 +820,80 @@ function App() {
         </span>
       </header>
       <section className="intro">
-        <p className="eyebrow">把想做的事，留在这里</p>
-        <h1>给日常，留一点条理。</h1>
-        <p>聊聊接下来的安排。每一项待办，都能再次找到。</p>
+        <div>
+          <p className="eyebrow">你的个人工作台</p>
+          <h1>给日常，留一点条理。</h1>
+          <p>想法随时聊，安排慢慢做。</p>
+        </div>
+        <div className="today-label">
+          <span>今天</span>
+          <time>{overview?.today || "正在同步"}</time>
+        </div>
       </section>
-      <div className="workspace">
+      <nav className="workspace-nav" aria-label="工作台导航">
+        {views.map((item) => (
+          <a
+            key={item.id}
+            href={item.href}
+            onClick={() => setView(item.id)}
+            aria-current={view === item.id ? "page" : undefined}
+          >
+            {item.label}
+            {item.id === "todos" &&
+              todos.some((todo) => todo.status !== "completed") && (
+                <span>
+                  {todos.filter((todo) => todo.status !== "completed").length}
+                </span>
+              )}
+            {item.id === "learning" &&
+              learningRequests.some((request) => !request.roadmap_id) && (
+                <i className="nav-dot" aria-label="有待补充的学习需求" />
+              )}
+          </a>
+        ))}
+      </nav>
+      {view !== "chat" && (busy || pending) && (
+        <div className="activity-note" role="status">
+          {phase} · 可在对话中查看处理进度
+        </div>
+      )}
+      {view !== "chat" && !(view === "learning" && showLearningOutcome && learningOutcome.id === latestRun?.id) && !busy && !pending && showRunOutcome && latestRun && (
+        <div
+          className={`activity-note${latestRun.status !== "completed" ? " activity-attention" : ""}`}
+          role={latestRun.status !== "completed" ? "alert" : "status"}
+        >
+          <span>
+            <strong>{runPhase(latestRun)}</strong> · 本轮已提交{" "}
+            {latestRun.todo_ids.length} 项待办变更
+          </span>
+          <button className="quiet" onClick={() => showRunResult(latestRun.id)}>
+            查看处理结果 →
+          </button>
+        </div>
+      )}
+      {error && (
+        <div className="error" role="alert">
+          {error}
+          {pending && !busy && (
+            <button onClick={() => void send(pending)}>重试同一请求</button>
+          )}
+          {!pending && (
+            <button onClick={() => window.location.reload()}>重新连接</button>
+          )}
+        </div>
+      )}
+      <div className="workspace" hidden={view !== "chat"} id="chat">
         <section className="chat panel" aria-label="聊天">
           <div className="panel-head">
-            <h2>和助理聊聊</h2>
+            <div className="chat-heading">
+              <span className="assistant-mark" aria-hidden="true">
+                ✳
+              </span>
+              <div>
+                <h2>和助理聊聊</h2>
+                <p>记下安排，也理清想法</p>
+              </div>
+            </div>
             <button
               className="quiet"
               disabled={busy || !!pending}
@@ -871,15 +908,29 @@ function App() {
                 <span className="spark">✳</span>
                 <h3>从一件小事开始</h3>
                 <p>试着说：“明天我要学习 Python，还要整理书桌。”</p>
-                <p className="hint">没有日期的事项会保留为「未安排」。</p>
+                <div className="starter-prompts">
+                  <button
+                    type="button"
+                    onClick={() => draftMessage("今天我该干什么？")}
+                  >
+                    梳理今天的安排 <span aria-hidden="true">↗</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => draftMessage("我想学习 ")}
+                  >
+                    规划一个学习目标 <span aria-hidden="true">↗</span>
+                  </button>
+                </div>
               </div>
             )}
             {messages.map((m) => (
-              <article key={m.id} className={`message ${m.role}`}>
+              <article key={m.id} id={`message-${m.id}`} className={`message ${m.role}`}>
                 <div className="speaker">
                   {m.role === "user" ? "你" : "主 Agent"}
                 </div>
                 <p>{m.content}</p>
+                {m.role === "assistant" && <RoadmapLinks links={m.roadmap_links} />}
               </article>
             ))}
           </div>
@@ -889,19 +940,6 @@ function App() {
               <span> · 本轮保存 {savedCount} 项待办</span>
             )}
           </div>
-          {error && (
-            <div className="error" role="alert">
-              {error}
-              {pending && !busy && (
-                <button onClick={() => void send(pending)}>重试同一请求</button>
-              )}
-              {!pending && (
-                <button onClick={() => window.location.reload()}>
-                  重新连接
-                </button>
-              )}
-            </div>
-          )}
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -932,223 +970,291 @@ function App() {
               </button>
             </div>
           </form>
-          <section className="suggestions" aria-label="请求执行记录">
-            <h2>请求执行记录</h2>
-            <p className="list-note">
-              状态与保存结果来自服务端；回复文本不代表整轮完成。
-            </p>
-            {runs.map((run) => (
-              <article className="suggestion" key={run.id}>
-                <p>{run.content}</p>
-                <strong>{runPhase(run)}</strong>
-                <p>已提交待办变更 {run.todo_ids.length} 项</p>
-                {run.retry_of && <small>这是一次重试，原记录保留。</small>}
-                {run.retryable && !run.retry_run_id && (
+          <details className="execution-history" ref={executionHistory}>
+            <summary>
+              请求执行记录 <span>{runs.length} 轮</span>
+            </summary>
+            <section aria-label="请求执行记录">
+              <p className="list-note">
+                状态与保存结果来自服务端；回复文本不代表整轮完成。
+              </p>
+              {runs.map((run) => (
+                <article
+                  className="suggestion"
+                  key={run.id}
+                  id={`run-${run.id}`}
+                  tabIndex={-1}
+                >
+                  <p>{run.content}</p>
+                  <strong>{runPhase(run)}</strong>
+                  <p>已提交待办变更 {run.todo_ids.length} 项</p>
+                  <RoadmapLinks links={run.roadmap_links} className="run-roadmap-links" />
+                  {run.retry_of && <small>这是一次重试，原记录保留。</small>}
+                  {run.retryable && !run.retry_run_id && (
+                    <button
+                      className="quiet"
+                      disabled={busy || !!pending}
+                      onClick={() =>
+                        void send({
+                          session,
+                          request_id: run.id,
+                          content: run.content,
+                          retry_of: run.id,
+                        })
+                      }
+                    >
+                      重试未完成处理
+                    </button>
+                  )}
+                  {run.retry_run_id && <p>已有重试记录，请查看后续结果。</p>}
+                  <details>
+                    <summary>查看回复与执行记录</summary>
+                    <p>{run.reply || "尚无最终回复"}</p>
+                    <small>请求 {run.id}</small>
+                    <ol>
+                      {run.events.map((event) => (
+                        <li key={event.seq}>
+                          {event.seq} · {event.kind}
+                          {typeof event.data.role === "string"
+                            ? ` · ${event.data.role}`
+                            : ""}
+                          {typeof event.data.tool === "string"
+                            ? ` · ${event.data.tool}`
+                            : ""}
+                          {typeof event.data.status === "string"
+                            ? ` · ${event.data.status}`
+                            : ""}
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
+                </article>
+              ))}
+            </section>
+          </details>
+          <ResearchPanel key={latestRun?.id || "no-run"} research={research} collapsed={!!(latestRun?.roadmap_context || latestRun?.roadmap_links?.length)} />
+          {(roadmaps.length > 0 ||
+            learningRequests.some((request) => !request.roadmap_id)) && (
+            <a className="learning-shortcut" href="#learning-roadmaps">
+              <span>
+                <strong>学习路线</strong>
+                <small>
+                  {roadmaps.length} 条已保存
+                  {learningRequests.some((request) => !request.roadmap_id)
+                    ? " · 有待补充的学习需求"
+                    : " · 继续你的学习进度"}
+                </small>
+              </span>
+              <span aria-hidden="true">↗</span>
+            </a>
+          )}
+          <WeatherPanel weather={weather} />
+          {suggestions.length > 0 && (
+            <section className="suggestions" aria-label="行动建议">
+              <div className="panel-head">
+                <h2>当天计划与行动建议</h2>
+                <button
+                  className="quiet"
+                  disabled={!session || busy || !!pending}
+                  onClick={() => act("今天我该干什么？")}
+                >
+                  生成当天计划
+                </button>
+              </div>
+              <p className="list-note">
+                可逐项选择加入；未选择的建议不会保存为待办。
+              </p>
+              {suggestions.map((idea) => (
+                <article key={idea.id} className="suggestion">
+                  <p>{idea.title}</p>
+                  <small>加入后安排在 {idea.scheduled_date}</small>
                   <button
                     className="quiet"
-                    disabled={busy || !!pending}
+                    disabled={busy || !!pending || !!idea.todo_id}
                     onClick={() =>
-                      void send({
-                        session,
-                        request_id: run.id,
-                        content: run.content,
-                        retry_of: run.id,
+                      act(`把建议 ${idea.id} 加入待办`, {
+                        tool: "accept_suggestion",
+                        arguments: { suggestion_id: idea.id },
                       })
                     }
                   >
-                    重试未完成处理
+                    {idea.todo_id ? "已加入" : "加入待办"}
                   </button>
-                )}
-                {run.retry_run_id && <p>已有重试记录，请查看后续结果。</p>}
-                <details>
-                  <summary>查看回复与执行记录</summary>
-                  <p>{run.reply || "尚无最终回复"}</p>
-                  <small>请求 {run.id}</small>
-                  <ol>
-                    {run.events.map((event) => (
-                      <li key={event.seq}>
-                        {event.seq} · {event.kind}
-                        {typeof event.data.role === "string"
-                          ? ` · ${event.data.role}`
-                          : ""}
-                        {typeof event.data.tool === "string"
-                          ? ` · ${event.data.tool}`
-                          : ""}
-                        {typeof event.data.status === "string"
-                          ? ` · ${event.data.status}`
-                          : ""}
-                      </li>
-                    ))}
-                  </ol>
-                </details>
-              </article>
-            ))}
-          </section>
-          <ResearchPanel research={research} />
-          <LearningRequestPanel requests={learningRequests} disabled={!session || busy || !!pending} act={act} />
-          <RoadmapPanel roadmaps={roadmaps} disabled={!session || busy || !!pending} act={act} />
-          <WeatherPanel weather={weather} />
-          <section className="suggestions" aria-label="行动建议">
-            <div className="panel-head">
-              <h2>当天计划与行动建议</h2>
-              <button
-                className="quiet"
-                disabled={!session || busy || !!pending}
-                onClick={() => act("今天我该干什么？")}
-              >
-                生成当天计划
-              </button>
-            </div>
-            <p className="list-note">
-              可逐项选择加入；未选择的建议不会保存为待办。
-            </p>
-            {suggestions.map((idea) => (
-              <article key={idea.id} className="suggestion">
-                <p>{idea.title}</p>
-                <small>加入后安排在 {idea.scheduled_date}</small>
-                <button
-                  className="quiet"
-                  disabled={busy || !!pending || !!idea.todo_id}
-                  onClick={() =>
-                    act(`把建议 ${idea.id} 加入待办`, {
-                      tool: "accept_suggestion",
-                      arguments: { suggestion_id: idea.id },
-                    })
-                  }
-                >
-                  {idea.todo_id ? "已加入" : "加入待办"}
-                </button>
-              </article>
-            ))}
-          </section>
+                </article>
+              ))}
+            </section>
+          )}
         </section>
-        <aside className="panel todos" aria-label="待办列表">
-          <div className="panel-head">
-            <h2>
-              已保存的待办 <span className="count">{todos.length}</span>
-            </h2>
+        <div className="overview-column">
+          <TodoOverview
+            todos={todos}
+            overview={overview}
+            disabled={!session || busy || !!pending}
+            act={act}
+            onRefresh={() => void refresh(session).catch(failed)}
+            onOpen={openTodos}
+          />
+          <section className="plan-prompt">
+            <span className="eyebrow">一步一步来</span>
+            <h2>今天，从哪件事开始？</h2>
+            <p>结合待办和你的习惯，整理一份当天计划。</p>
             <button
-              className="quiet"
-              onClick={() => void refresh(session).catch(failed)}
+              className="plan-button"
+              disabled={!session || busy || !!pending}
+              onClick={() => act("今天我该干什么？")}
             >
-              刷新
+              帮我规划今天 <span aria-hidden="true">↗</span>
             </button>
+          </section>
+        </div>
+      </div>
+      <div hidden={view !== "todos"} id="todos">
+        <TodoPanel
+          key={todoViewKey}
+          todos={todos}
+          overview={overview}
+          initialFilter={todoFilter}
+          disabled={!session || busy || !!pending}
+          act={act}
+          onRefresh={() => void refresh(session).catch(failed)}
+        />
+      </div>
+      <div className="learning-view panel" hidden={view !== "learning"}>
+        <div className="view-intro">
+          <p className="eyebrow">让每一步，都有方向</p>
+          <h2>你的学习路线</h2>
+          <p>从一个目标出发，按自己的节奏前进。</p>
+        </div>
+        {showLearningOutcome && learningOutcome && (
+          <section className="learning-outcomes" aria-label="学习请求处理结果">
+            <div className="activity-note activity-attention" role="alert">
+              <div>
+                <p><strong>{runPhase(learningOutcome)}</strong> · {learningOutcome.roadmap_links?.length ? "已保存的路线仍可查看。" : "本轮未得到可打开的路线，请查看处理结果。"}</p>
+                <RoadmapLinks links={learningOutcome.roadmap_links} className="run-roadmap-links" />
+                <div className="activity-actions">
+                  <button className="quiet" onClick={() => showRunResult(learningOutcome.id)}>查看处理结果 →</button>
+                  {learningOutcome.retryable && !learningOutcome.retry_run_id && <button className="quiet" disabled={busy || !!pending} onClick={() => void send({
+                    session, request_id: learningOutcome.id, content: learningOutcome.content, retry_of: learningOutcome.id,
+                  })}>重试未完成处理</button>}
+                  {learningOutcome.retry_run_id && <button className="quiet" onClick={() => showRunResult(learningOutcome.retry_run_id!)}>查看重试结果 →</button>}
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+        {learningRequests.some((request) => !request.roadmap_id) && (
+          <LearningRequestPanel
+            requests={learningRequests}
+            disabled={!session || busy || !!pending}
+            act={act}
+          />
+        )}
+        <RoadmapPanel
+          roadmaps={roadmaps}
+          disabled={!session || busy || !!pending}
+          act={act}
+        />
+        {!roadmaps.length && (
+          <button className="primary" onClick={() => draftMessage("我想学习 ")}>
+            聊聊想学的内容 ↗
+          </button>
+        )}
+      </div>
+      <div hidden={view !== "memory"} id="memory">
+        <section className="panel memory-panel" aria-label="学到了什么">
+          <div className="panel-head">
+            <h2>学到了什么</h2>
+            <span className="count">{memories.length}</span>
           </div>
           <p className="list-note">
-            跨会话保留 · {health?.timezone || "Asia/Shanghai"} ·{" "}
-            {overview?.today}
+            从普通聊天整理 · 保存内容与本次采用分开展示
           </p>
-          {!todos.length && (
-            <div className="empty">
-              <span>◎</span>
-              <h3>这里还很轻盈</h3>
-              <p>告诉助理你的安排，保存后会显示在这里。</p>
-            </div>
-          )}
-          {Object.entries(groups).map(([key, label]) => (
-            <section key={key} aria-label={label} className="todo-group">
-              <h3>
-                {label}{" "}
-                <span className="count">
-                  {overview?.groups[key]?.length || 0}
-                </span>
-              </h3>
-              <ul>
-                {(overview?.groups[key] || []).map((todo) => (
-                  <TodoCard
-                    key={todo.id}
-                    todo={todo}
+          <div className="memory-columns">
+            <div>
+              <h3>已保存的记忆</h3>
+              {!memories.length && (
+                <p>聊聊你的背景、资料偏好或今天的时间条件。</p>
+              )}
+              {memories.map((memory) => (
+                <article className="memory-card" key={memory.id}>
+                  <h3>{memory.content}</h3>
+                  <p>
+                    {memoryCategories[memory.category]} ·{" "}
+                    {memory.scope === "task" ? "任务限定" : "一般范围"} ·{" "}
+                    {memory.active
+                      ? "生效中"
+                      : memory.state === "conflict"
+                        ? "冲突待澄清"
+                        : "当前不生效"}
+                  </p>
+                  <small>
+                    主题：{memory.topic}
+                    <br />
+                    生效：{memory.valid_from}
+                    <br />
+                    {memory.expires_at
+                      ? `截止：${memory.expires_at}`
+                      : memory.scope === "task"
+                        ? "对应任务完成后失效"
+                        : "持续有效"}
+                  </small>
+                  {memory.task_id && <p>对应待办：{memory.task_id}</p>}
+                  <MemoryEditor
+                    key={memory.source.message_id}
+                    memory={memory}
+                    todos={todos}
                     disabled={busy || !!pending}
                     act={act}
                   />
-                ))}
-              </ul>
-            </section>
-          ))}
-          <p className="footnote">这里展示的是实际保存结果。</p>
-        </aside>
+                  <details>
+                    <summary>来源表达与标识</summary>
+                    <p>{memory.source.content}</p>
+                    <small>
+                      消息 {memory.source.message_id}
+                      <br />
+                      会话 {memory.source.session_id}
+                      <br />
+                      记忆 {memory.id}
+                    </small>
+                  </details>
+                </article>
+              ))}
+            </div>
+            <div aria-label="本次记忆使用">
+              <h3>本次加载与采用</h3>
+              <p>
+                {evidence?.learning === "failed"
+                  ? "本轮学习保存失败"
+                  : `本轮新保存 ${evidence?.saved_ids?.length || 0} 条记忆`}
+              </p>
+              <p>此次加载 {evidence?.loaded?.length || 0} 条生效记忆</p>
+              {evidence?.loaded?.map((memory) => (
+                <article className="memory-card" key={memory.id}>
+                  <p>{memory.content}</p>
+                  <small>来源消息 {memory.source.message_id}</small>
+                  <p>
+                    采用说明：
+                    {evidence.usage?.find((u) => u.memory_id === memory.id)
+                      ?.reason || "未报告采用"}
+                  </p>
+                </article>
+              ))}
+              <p className="footnote">
+                采用说明由主 Agent 报告，效果尚未验证。
+              </p>
+            </div>
+          </div>
+        </section>
+        <details className="panel evidence-disclosure">
+          <summary>
+            <span>
+              学习效果与证据<small>查看记忆如何影响后续回答</small>
+            </span>
+            <span aria-hidden="true">＋</span>
+          </summary>
+          <EvidencePanel runs={runs} />
+        </details>
       </div>
-      <section className="panel memory-panel" aria-label="学到了什么">
-        <div className="panel-head">
-          <h2>学到了什么</h2>
-          <span className="count">{memories.length}</span>
-        </div>
-        <p className="list-note">从普通聊天整理 · 保存内容与本次采用分开展示</p>
-        <div className="memory-columns">
-          <div>
-            <h3>已保存的记忆</h3>
-            {!memories.length && (
-              <p>聊聊你的背景、资料偏好或今天的时间条件。</p>
-            )}
-            {memories.map((memory) => (
-              <article className="memory-card" key={memory.id}>
-                <h3>{memory.content}</h3>
-                <p>
-                  {memoryCategories[memory.category]} ·{" "}
-                  {memory.scope === "task" ? "任务限定" : "一般范围"} ·{" "}
-                  {memory.active
-                    ? "生效中"
-                    : memory.state === "conflict"
-                      ? "冲突待澄清"
-                      : "当前不生效"}
-                </p>
-                <small>
-                  主题：{memory.topic}
-                  <br />
-                  生效：{memory.valid_from}
-                  <br />
-                  {memory.expires_at
-                    ? `截止：${memory.expires_at}`
-                    : memory.scope === "task"
-                      ? "对应任务完成后失效"
-                      : "持续有效"}
-                </small>
-                {memory.task_id && <p>对应待办：{memory.task_id}</p>}
-                <MemoryEditor
-                  key={memory.source.message_id}
-                  memory={memory}
-                  todos={todos}
-                  disabled={busy || !!pending}
-                  act={act}
-                />
-                <details>
-                  <summary>来源表达与标识</summary>
-                  <p>{memory.source.content}</p>
-                  <small>
-                    消息 {memory.source.message_id}
-                    <br />
-                    会话 {memory.source.session_id}
-                    <br />
-                    记忆 {memory.id}
-                  </small>
-                </details>
-              </article>
-            ))}
-          </div>
-          <div aria-label="本次记忆使用">
-            <h3>本次加载与采用</h3>
-            <p>
-              {evidence?.learning === "failed"
-                ? "本轮学习保存失败"
-                : `本轮新保存 ${evidence?.saved_ids?.length || 0} 条记忆`}
-            </p>
-            <p>此次加载 {evidence?.loaded?.length || 0} 条生效记忆</p>
-            {evidence?.loaded?.map((memory) => (
-              <article className="memory-card" key={memory.id}>
-                <p>{memory.content}</p>
-                <small>来源消息 {memory.source.message_id}</small>
-                <p>
-                  采用说明：
-                  {evidence.usage?.find((u) => u.memory_id === memory.id)
-                    ?.reason || "未报告采用"}
-                </p>
-              </article>
-            ))}
-            <p className="footnote">采用说明由主 Agent 报告，效果尚未验证。</p>
-          </div>
-        </div>
-      </section>
-      <EvidencePanel runs={runs} />
       <footer>
         日常 / 个人工作台 <span>从今天开始，慢慢做好每件事。</span>
       </footer>

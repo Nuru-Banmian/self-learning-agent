@@ -72,6 +72,11 @@ class Store:
             db.executescript(scheduling.SCHEMA)
             db.executescript(learning_request_store.SCHEMA)
             columns = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
+            if "presentation" not in columns:
+                db.execute(
+                    "ALTER TABLE runs ADD COLUMN presentation "
+                    "TEXT NOT NULL DEFAULT '{}'"
+                )
             if "roadmap" not in columns:
                 db.execute(
                     "ALTER TABLE runs ADD COLUMN roadmap TEXT NOT NULL DEFAULT '{}'"
@@ -102,6 +107,9 @@ class Store:
                     "AND m.received_at=runs.received_at "
                     "AND m.content=runs.reply LIMIT 1)"
                 )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS runs_by_reply ON runs(reply_message_id)"
+            )
             if "retry_of" not in columns:
                 db.execute("ALTER TABLE runs ADD COLUMN retry_of TEXT REFERENCES runs")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_retry ON runs(retry_of)")
@@ -151,7 +159,7 @@ class Store:
                 (session_id,),
             ).fetchone()
             return dict(row) | {
-                "messages": [dict(m) for m in messages],
+                "messages": [self._message(db, m) for m in messages],
                 "latest_run_id": latest[0] if latest else None,
                 "run_ids": [
                     r[0]
@@ -169,6 +177,7 @@ class Store:
             if row is None:
                 return None
             return dict(row) | {
+                **self._presentation(row),
                 "todo_ids": json.loads(row["todo_ids"]),
                 "action": json.loads(row["action"]) if row["action"] else None,
                 "memory": json.loads(row["memory"]),
@@ -204,13 +213,54 @@ class Store:
                 else 0,
                 "events": self._events(db, run_id, 0),
                 "messages": [
-                    dict(m)
+                    self._message(db, m)
                     for m in db.execute(
                         "SELECT * FROM messages WHERE id IN (?,?) ORDER BY rowid",
                         (row["message_id"], row["reply_message_id"]),
                     )
                 ],
             }
+
+    @staticmethod
+    def _presentation(run: sqlite3.Row) -> dict[str, Any]:
+        presentation = json.loads(run["presentation"])
+        route = json.loads(run["roadmap"])
+        research = json.loads(run["research"])
+        links = presentation.get("roadmap_links", [])
+        if not links and route:
+            links = [
+                {"roadmap_id": route["id"], "node_id": None, "title": route["title"]}
+            ]
+        return {
+            "roadmap_context": bool(
+                presentation.get("roadmap_context")
+                or route
+                or research.get("purpose") in ("roadmap", "revision")
+            ),
+            "roadmap_links": links,
+        }
+
+    def _message(self, db: sqlite3.Connection, message: sqlite3.Row) -> dict[str, Any]:
+        run = db.execute(
+            "SELECT * FROM runs WHERE reply_message_id=?", (message["id"],)
+        ).fetchone()
+        return dict(message) | (self._presentation(run) if run else {})
+
+    def session_roadmap_links(
+        self, session_id: str, before_run_id: str
+    ) -> list[dict[str, Any]]:
+        """Read the latest preceding route reference without loading run history."""
+        with self.connect() as db:
+            for row in db.execute(
+                "SELECT roadmap,research,presentation FROM runs WHERE session_id=? "
+                "AND rowid < (SELECT rowid FROM runs WHERE id=?) "
+                "AND (roadmap != '{}' OR presentation != '{}') ORDER BY rowid DESC",
+                (session_id, before_run_id),
+            ):
+                links: list[dict[str, Any]] = self._presentation(row)["roadmap_links"]
+                if links:
+                    return links
+        return []
 
     def add_checkpoint(
         self, run_id: str, check: dict[str, Any], now: str
@@ -659,6 +709,8 @@ class Store:
         revision_confirm: dict[str, Any] | None = None,
         schedule_preview: dict[str, Any] | None = None,
         schedule_confirm: dict[str, Any] | None = None,
+        roadmap_context: bool = False,
+        roadmap_links: list[dict[str, Any]] | None = None,
     ) -> None:
         # Todos, success evidence, assistant message and terminal state commit together.
         with self.connect() as db:
@@ -666,6 +718,19 @@ class Store:
             run = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
             if run is None or run["status"] not in ("running", "queued"):
                 return
+            if roadmap_context or roadmap_links:
+                db.execute(
+                    "UPDATE runs SET presentation=? WHERE id=?",
+                    (
+                        json.dumps(
+                            {
+                                "roadmap_context": roadmap_context,
+                                "roadmap_links": roadmap_links or [],
+                            }
+                        ),
+                        run_id,
+                    ),
+                )
             ids = []
             if revision_preview or revision_confirm:
                 proposal, reply = (
@@ -1044,11 +1109,18 @@ class Store:
                 self._event(db, run_id, "research", research)
                 if research["sources"]:
                     status = "partial"
-                    reply += "\n\n已取得的外部资料保留：\n" + "\n".join(
-                        f"[{s['id']}] {s['title']} ({s['material_type']})\n"
-                        f"{s['url']}\n{s['snippet']}"
-                        for s in research["sources"]
-                    )
+                    if research.get("purpose") in ("roadmap", "revision"):
+                        reply = (
+                            "处理未完成，尚未生成有效的路线或调整方案，未新增待办。"
+                            "请展开资料记录查看限制后重试。"
+                        )
+                    else:
+                        reply += "\n\n已取得的外部资料保留：\n" + "\n".join(
+                            f"[{s['id']}] {s['title']} ({s['material_type']})\n"
+                            f"{s['url']}\n{s['snippet']}"
+                            for s in research["sources"]
+                        )
+            before_memory_notice = reply
             if status == "failed" and memory.get("saved_ids"):
                 status = "partial"
                 reply += "\n\n记忆已提交保存，但本轮其他处理未完成。"
@@ -1065,6 +1137,10 @@ class Store:
                     "\n\n部分记忆候选无法核实，未保存；"
                     "请用完整陈述明确背景、偏好或条件。"
                 )
+            if (
+                roadmap or revision_preview or revision_confirm
+            ) and reply != before_memory_notice:
+                reply = before_memory_notice + "\n记忆处理有限制，请查看处理记录。"
             reply_message_id = str(uuid4())
             db.execute(
                 "INSERT INTO messages VALUES(?,?,'assistant',?,?)",

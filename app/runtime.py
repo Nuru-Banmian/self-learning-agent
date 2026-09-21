@@ -22,6 +22,7 @@ from app.research import (
 )
 from app.revision_chat import Revision, RevisionRequest, chat_request, generate
 from app.revisions import Confirmation
+from app.roadmap_details import finish_node_details
 from app.roadmaps import (
     NodeSelection,
     NodesSelection,
@@ -205,6 +206,8 @@ async def execute(
                 store.finish(
                     run_id, "completed", "", change=change, tool=action["tool"]
                 )
+                return
+            if finish_node_details(store, run):
                 return
             revision_request = chat_request(store, run["content"])
             if revision_request:

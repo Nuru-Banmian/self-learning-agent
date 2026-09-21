@@ -40,7 +40,7 @@ def test_replacing_prerequisite_warns_without_rewriting_retained_nodes(tmp_path)
         )
         proposal = preview["roadmap"]["revision_proposals"][0]
         assert any("先修" in gap and "核验" in gap for gap in proposal["gaps"])
-        assert proposal["gaps"][0] in preview["reply"]
+        assert "限制" in preview["reply"] and len(preview["reply"]) <= 800
         assert "event: roadmap_revision_preview" in events
         assert preview["roadmap"]["nodes"] == route["nodes"]
         assert proposal["nodes"][1]["exercise"] == route["nodes"][1]["exercise"]

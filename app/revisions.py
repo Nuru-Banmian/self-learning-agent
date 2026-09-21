@@ -8,6 +8,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from app import roadmap_store
+from app.roadmap_presentation import render_nodes, validate_summary
 from app.todos import Clarification
 
 SCHEMA = """
@@ -57,15 +58,21 @@ def preview(
         if not set(node["source_ids"]) <= {s["id"] for s in sources}:
             raise Clarification("调整引用了未取得的资料，未保存方案。")
         before = old.get(identity)
+        for display, full in (
+            ("display_title", "todo_title"),
+            ("display_goal", "goal"),
+        ):
+            if before and before[full] == node[full] and not node[display]:
+                node[display] = before.get(display, "")
         if (
             before
             and before["status"] == "completed"
-            and any(before[k] != v for k, v in node.items())
+            and any(before.get(k, "") != v for k, v in node.items())
         ):
             raise Clarification("已完成节点内容和日期不能改写；新学习目标请新增节点。")
         after = node | {"id": identity, "position": position}
         nodes.append(after)
-        if before is None or any(before[k] != v for k, v in after.items()):
+        if before is None or any(before.get(k, "") != v for k, v in after.items()):
             todo_before = before["todo"] if before else None
             todo_after = dict(todo_before) if todo_before else None
             if todo_after and before:
@@ -238,6 +245,8 @@ def confirm(
             "SELECT content FROM roadmaps WHERE id=?", (route["id"],)
         ).fetchone()[0]
     )
+    if content["title"] != proposal["after"]["title"]:
+        content.pop("display_title", None)
     content.update(proposal["after"], sources=proposal["sources"])
     content["gaps"] = list(dict.fromkeys(content["gaps"] + proposal["gaps"]))
     if content["gaps"]:
@@ -251,46 +260,16 @@ def confirm(
         (target.proposal_id,),
     )
     return proposal | {"status": "applied"}, render(
-        proposal, "调整已应用，已同步明确确认的待办"
+        proposal | {"status": "applied"}, "调整已应用，已同步明确确认的待办"
     )
 
 
 def render(proposal: dict[str, Any], heading: str) -> str:
-    text = heading + "\n"
-    text += f"路线标题：{proposal['before']['title']} → {proposal['after']['title']}\n"
-    text += f"路线目标：{proposal['before']['goal']} → {proposal['after']['goal']}\n"
-    for entry in proposal["entries"]:
-        text += {
-            "add": "新增候选",
-            "modify": "修改节点",
-            "archive": "移入历史（保留关联待办和完成记录）",
-        }[entry["kind"]] + "\n"
-        for label, node in (("当前", entry["before"]), ("调整后", entry["after"])):
-            if node:
-                text += (
-                    f"{label}：第 {node['position']} 步，{node['goal']}；"
-                    f"预计 {node['estimated_minutes']} 分钟\n"
-                    f"练习：{node['exercise']}\n完成标准：{node['completion_criteria']}\n"
-                    f"候选：{node['todo_title']}；"
-                    f"日期：{node['scheduled_date'] or '未安排'}\n"
-                    f"资料：{', '.join(node['source_ids'])}\n"
-                )
-        if entry["todo_before"]:
-            text += (
-                "关联待办："
-                + json.dumps(
-                    {"当前": entry["todo_before"], "确认后": entry["todo_after"]},
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-    for source in proposal["sources"]:
-        text += (
-            f"[{source['id']}] {source['title']} {source['url']}"
-            f"（{source['material_type']}）\n"
-        )
-    return (
-        text
-        + "\n".join(proposal["gaps"])
-        + "\n请在路线面板审阅并确认；新增候选不会自动加入待办。"
-    )
+    text = heading + "\n" + render_nodes(proposal["nodes"])
+    if proposal.get("status") == "applied":
+        text += "\n新候选尚未加入待办，具体变更可展开查看。"
+    else:
+        text += "\n展开调整方案审阅具体变更与待办同步范围，再明确确认。"
+    if proposal["gaps"]:
+        text += "\n部分资料或先修条件有限制，请展开方案查看。"
+    return validate_summary(text)
