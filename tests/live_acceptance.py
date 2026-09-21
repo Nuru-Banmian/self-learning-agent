@@ -11,6 +11,7 @@ from time import monotonic
 from uuid import uuid4
 
 from app.settings import Settings
+from tests.live_weather import shanghai_followup
 from tests.test_chat import submit
 from tests.test_maintenance import action
 from tests.test_process import free_port, server_process
@@ -208,6 +209,9 @@ def main():
                 == 201
             )
             outing = step(client, "outing", "查询明天上海天气，出门需要准备什么？")
+            followup = shanghai_followup(outing)
+            if followup:
+                outing = step(client, "outing-resolved", followup)
             assert outing["weather"]["status"] == "success"
             ambiguous = step(
                 client, "ambiguous", "查询明天朝阳天气，出门需要准备什么？"
