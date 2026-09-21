@@ -61,6 +61,9 @@ def read(db: sqlite3.Connection, roadmap_id: str) -> dict[str, Any] | None:
                 else None,
             }
         )
+    archived = {r[0] for r in db.execute("SELECT node_id FROM roadmap_history")}
+    history = [n for n in nodes if n["id"] in archived]
+    nodes = [n for n in nodes if n["id"] not in archived]
     content: dict[str, Any] = json.loads(row["content"])
     completed = sum(n["status"] == "completed" for n in nodes)
     return content | {
@@ -69,6 +72,15 @@ def read(db: sqlite3.Connection, roadmap_id: str) -> dict[str, Any] | None:
         "version": row["version"],
         "created_at": row["created_at"],
         "nodes": nodes,
+        "history_nodes": history,
+        "revision_proposals": [
+            json.loads(p["content"]) | {"status": p["status"]}
+            for p in db.execute(
+                "SELECT * FROM revision_proposals WHERE roadmap_id=? "
+                "ORDER BY rowid DESC",
+                (roadmap_id,),
+            )
+        ],
         "schedule_proposals": [
             json.loads(p["content"]) | {"status": p["status"]}
             for p in db.execute(
@@ -95,7 +107,9 @@ def complete(
     assert row is not None
     route = read(db, row["roadmap_id"])
     assert route is not None
-    node = next(n for n in route["nodes"] if n["id"] == node_id)
+    node = next(
+        n for n in route["nodes"] + route["history_nodes"] if n["id"] == node_id
+    )
     created = node["completion"] is None
     if created:
         if node["todo_id"] and node["todo"]["status"] != "completed":

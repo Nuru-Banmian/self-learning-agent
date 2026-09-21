@@ -1,3 +1,4 @@
+import { RevisionPanel, type RevisionProposal } from "./RevisionPanel";
 import { useEffect, useState } from "react";
 import { SchedulePanel, type ScheduleProposal } from "./SchedulePanel";
 
@@ -8,7 +9,7 @@ export type RoadmapSummary = {
   version: number;
   status: string;
 };
-type Node = {
+export type Node = {
   id: string;
   position: number;
   goal: string;
@@ -28,10 +29,12 @@ type Node = {
   } | null;
   todo: { title: string; scheduled_date: string | null; status: string } | null;
 };
-type Roadmap = RoadmapSummary & {
+export type Roadmap = RoadmapSummary & {
   request: string;
   schedule_proposals: ScheduleProposal[];
   nodes: Node[];
+  history_nodes: Node[];
+  revision_proposals: RevisionProposal[];
   progress: { completed: number; total: number; remaining: number };
   gaps: string[];
   sources: {
@@ -45,7 +48,7 @@ type Roadmap = RoadmapSummary & {
   }[];
 };
 export type RoadmapAction = {
-  tool: "accept_roadmap_nodes" | "complete_roadmap_node" | "preview_roadmap_schedule" | "confirm_roadmap_schedule";
+  tool: "revise_roadmap" | "preview_roadmap_revision" | "confirm_roadmap_revision" | "accept_roadmap_nodes" | "complete_roadmap_node" | "preview_roadmap_schedule" | "confirm_roadmap_schedule";
   arguments: Record<string, unknown>;
 };
 
@@ -151,6 +154,7 @@ export function RoadmapPanel({
               {gap}
             </p>
           ))}
+          <RevisionPanel key={`${route.id}-${route.version}`} route={route} disabled={disabled} act={act} />
           <SchedulePanel key={route.id} route={route} disabled={disabled} act={act} />
           <p>是否将节点加入待办？预计耗时仅供参考。</p>
           <a href="#learning-roadmaps" className="roadmap-link">
@@ -207,15 +211,15 @@ export function RoadmapPanel({
               确认加入所选 {pending.length} 项
             </button>
           </section>
-          {route.nodes.map((node) => (
+          {[...route.nodes, ...route.history_nodes].map((node) => (
             <section
               key={node.id}
               id={`node-${node.id}`}
               className="suggestion"
-              aria-label={`节点 ${node.position}`}
+              aria-label={node.position < 0 ? `历史节点 ${node.goal}` : `节点 ${node.position}`}
             >
               <h4>
-                {node.position}. {node.goal}
+                {node.position < 0 ? "历史节点（保留关联与记录）" : `${node.position}.`} {node.goal}
               </h4>
               <p>预计 {node.estimated_minutes} 分钟</p>
               <p>当前节点安排：{node.scheduled_date || "未安排"}</p>
@@ -271,7 +275,7 @@ export function RoadmapPanel({
                 <input
                   type="checkbox"
                   disabled={
-                    disabled || !!node.todo_id || node.status === "completed"
+                    disabled || node.position < 0 || !!node.todo_id || node.status === "completed"
                   }
                   checked={checked.includes(node.id)}
                   onChange={(event) =>
@@ -293,7 +297,7 @@ export function RoadmapPanel({
                 <small>{node.id}</small>
               </details>
               <button
-                disabled={disabled || node.status === "completed"}
+                disabled={disabled || node.position < 0 || node.status === "completed"}
                 onClick={() => act(`将节点「${node.goal}」标记为已掌握`, {
                   tool: "complete_roadmap_node",
                   arguments: {
