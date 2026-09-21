@@ -1052,8 +1052,11 @@ class Store:
             if status == "failed" and memory.get("saved_ids"):
                 status = "partial"
                 reply += "\n\n记忆已提交保存，但本轮其他处理未完成。"
-            if status == "completed" and memory.get("learning") == "failed":
-                status, error = "partial", "memory_learning"
+            if (
+                status in ("completed", "partial")
+                and memory.get("learning") == "failed"
+            ):
+                status, error = "partial", error or "memory_learning"
                 reply += "\n\n本轮学习保存失败，未新增记忆；回答与待办结果仍可查看。"
             if memory.get("conflict_ids"):
                 reply += "\n\n发现可能冲突的记忆，已暂停这些记忆生效，请澄清适用范围。"

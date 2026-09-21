@@ -29,6 +29,40 @@ def revision_args(route):
     }
 
 
+def test_replacing_prerequisite_warns_without_rewriting_retained_nodes(tmp_path):
+    with roadmap_client(tmp_path, []) as c:
+        generated, _ = submit(c, REQUEST)
+        route = generated["roadmap"]
+        args = revision_args(route)
+        args["nodes"][0]["exercise"] = "改用容器内 redis-cli 执行 SET 和 GET"
+        preview, events = action(
+            c, generated["session_id"], "preview", "preview_roadmap_revision", args
+        )
+        proposal = preview["roadmap"]["revision_proposals"][0]
+        assert any("先修" in gap and "核验" in gap for gap in proposal["gaps"])
+        assert proposal["gaps"][0] in preview["reply"]
+        assert "event: roadmap_revision_preview" in events
+        assert preview["roadmap"]["nodes"] == route["nodes"]
+        assert proposal["nodes"][1]["exercise"] == route["nodes"][1]["exercise"]
+        assert c.get("/api/todos").json() == []
+        done, _ = action(
+            c,
+            generated["session_id"],
+            "confirm",
+            "confirm_roadmap_revision",
+            {
+                "roadmap_id": route["id"],
+                "proposal_id": proposal["id"],
+                "sync_todo_ids": [],
+            },
+        )
+        assert done["roadmap"]["status"] == "partial"
+        assert proposal["gaps"][0] in done["roadmap"]["gaps"]
+        assert done["roadmap"]["nodes"][1] == route["nodes"][1]
+    with roadmap_client(tmp_path, [], dashscope_api_key="", iqs_api_key="") as c:
+        assert c.get(f"/api/roadmaps/{route['id']}").json() == done["roadmap"]
+
+
 def test_unjoined_revision_preview_confirm_and_restart(tmp_path):
     with roadmap_client(tmp_path, []) as c:
         generated, _ = submit(c, REQUEST)

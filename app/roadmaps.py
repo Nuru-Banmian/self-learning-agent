@@ -19,7 +19,15 @@ class Node(BaseModel):
     goal: str = Field(min_length=1, max_length=300)
     estimated_minutes: int = Field(ge=1, le=480)
     source_ids: list[str] = Field(min_length=1, max_length=5)
-    exercise: str = Field(min_length=1, max_length=600)
+    exercise: str = Field(
+        min_length=1,
+        max_length=600,
+        description=(
+            "可执行练习：给出输入、操作和完整调用示例。"
+            "函数示例必须包含所有实际参数值，不能只写函数名或要求读者自行选择参数；"
+            "例如生成器取两项时明确写gen=count_up(3)，而不是仅写调用count_up(n)。"
+        ),
+    )
     completion_criteria: str = Field(min_length=1, max_length=400)
     todo_title: str = Field(min_length=1, max_length=200)
 
@@ -276,6 +284,16 @@ def finish_roadmap(
 ) -> None:
     content = None
     if answer:
+        # Search titles and model prose are not evidence of publisher identity.
+        preferences = [
+            m["content"]
+            for m in record["input_summary"]["memories"]
+            if m["category"] == "preference"
+        ]
+        if "官方" in run["content"] + " ".join(preferences):
+            record["gaps"].append(
+                "来源的官方身份尚未核实，不能确认满足官方资料偏好；请核对所列来源。"
+            )
         record["gaps"].extend(answer.gaps)
         if record["gaps"]:
             record["status"] = "partial"
