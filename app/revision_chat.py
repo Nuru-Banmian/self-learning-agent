@@ -54,24 +54,48 @@ class SearchPlan(BaseModel):
 
 def chat_request(store: Store, content: str) -> RevisionRequest | None:
     text = unquoted_request(content)
+    # Explicit todo commands retain their normal write-authorization path.
     if re.search(
         r"^\s*(?:请|麻烦)?(?:帮我|给我)?(?:记录|记下|记一条|添加待办|创建待办|完成|标记完成)|"
-        r"改到|改期到|日期改为|标题改为|改名为|标记为?已?完成",
+        r"^\s*(?:请)?(?:把|将)?\s*待办",
         text,
     ):
         return None
+    todo_change = re.fullmatch(
+        r"\s*(?:请|麻烦)?(?:帮我)?(?:把|将)(.+?)(?:的)?"
+        r"(?:标题改为|改名为|日期改为|改期到|改到|标记为已完成|标记完成|标为完成)"
+        r".*",
+        text,
+    )
+    if todo_change:
+        target = todo_change[1].strip()
+        if "待办" in target or any(
+            target in (todo["id"], todo["title"]) for todo in store.todos()
+        ):
+            return None
     intent = (
-        r"调整.*路线|修改.*路线|路线.*(?:调整|修改)|改简单|改容易|太难了|"
-        r"改变.*学习目标|学习目标.*改"
+        r"(?:调整|修改|简化|重排).*(?:路线|节点)|(?:路线|节点).*(?:调整|修改|简化|重排)|"
+        r"改简单|改容易|太难了|改变.*学习目标|学习目标.*改"
     )
     if not re.search(intent, text):
         return None
-    if re.search(
-        r"(?:不要|不用|不需要|别)(?:再|帮我)?(?:调整|修改|改变)"
-        r"(?:(?:这条|该|当前|学习)?路线|学习目标|[，,。！!]|$)|"
-        r"解释|翻译|比如|如果|假如|要不要|是否",
-        text,
-    ):
+    # A negative clause about a field or node protects that scope. A negative
+    # revision clause about the route itself cancels the request, including 把句.
+    denied = bool(re.search(r"解释|翻译|比如|如果|假如|要不要|是否", text))
+    positive = False
+    for clause in re.split(r"[，,。；;！？!?\n]", text):
+        negative = re.search(r"不要|不用|不需要|不必|无需|别|暂不|先不|不想", clause)
+        affirmative = clause[: negative.start()] if negative else clause
+        positive = positive or bool(re.search(intent, affirmative))
+        if not negative:
+            continue
+        if re.search(
+            r"日期|节点|练习|标题|已完成|已加入|已关联|进度|记录|顺序", clause
+        ):
+            continue
+        if re.search(r"调整|修改|改变|改简单|改容易|简化|重排", clause):
+            denied = True
+    if denied or not positive:
         raise Clarification("本轮没有明确调整请求，当前路线保持原状。")
     routes = store.roadmaps()
     matched = [r for r in routes if r["id"] in content or r["title"] in content]

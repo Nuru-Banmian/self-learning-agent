@@ -66,6 +66,8 @@ def test_unjoined_revision_preview_confirm_and_restart(tmp_path):
     [
         "这条路线太难了，改简单一点，搜索新的入门资料",
         "请调整这条路线，把第一个练习改简单一点，不要修改日期，搜索新的入门资料",
+        "请调整这条路线，把第一个节点的标题改为 Redis 入门练习，搜索新的入门资料",
+        "请调整这条路线，不要修改路线中已完成的节点，搜索新的入门资料",
     ],
 )
 @pytest.mark.parametrize("query", ["Redis beginner SET GET official", None])
@@ -574,6 +576,63 @@ def test_parallel_confirmation_applies_only_one_competing_revision(tmp_path):
         assert c.get("/api/todos").json() == []
 
 
+@pytest.mark.parametrize(
+    ("reference", "new_title"),
+    [
+        ("买牛奶", "调整路线"),
+        ("买牛奶的", "调整路线"),
+        ("第一条待办", "调整路线"),
+        ("买牛奶", "调整路线，整理资料"),
+    ],
+)
+def test_todo_rename_with_revision_words_keeps_normal_todo_authorization(
+    tmp_path, reference, new_title
+):
+    import json
+
+    import httpx
+
+    from tests.test_maintenance import operation_response
+    from tests.test_roadmaps import roadmap_provider
+
+    base = roadmap_provider([])
+    todo_id = ""
+
+    def provider(request):
+        body = json.loads(request.content)
+        if body.get("tools") and "请记录" in body["messages"][-1]["content"]:
+            return httpx.Response(
+                200,
+                json=operation_response(
+                    "create_todos",
+                    {"items": [{"title": "买牛奶", "date_text": "明天"}]},
+                ),
+            )
+        if body.get("tools") and "标题改为" in body["messages"][-1]["content"]:
+            return httpx.Response(
+                200,
+                json=operation_response(
+                    "update_todo", {"todo_id": todo_id, "title": new_title}
+                ),
+            )
+        return base(request)
+
+    with roadmap_client(tmp_path, [], provider) as c:
+        generated, _ = submit(c, REQUEST)
+        route, session = generated["roadmap"], generated["session_id"]
+        created, _ = submit(c, "请记录明天买牛奶", "create", session)
+        todo_id = created["todo_ids"][0]
+        changed, _ = submit(c, f"把{reference}标题改为{new_title}", "rename", session)
+        assert changed["status"] == "completed", changed
+        if reference != "第一条待办":
+            assert changed["todo_ids"] == [todo_id]
+            assert c.get("/api/todos").json()[0]["title"] == new_title
+        else:
+            assert "目标不明确" in changed["reply"]
+            assert c.get("/api/todos").json()[0]["title"] == "买牛奶"
+        assert c.get(f"/api/roadmaps/{route['id']}").json() == route
+
+
 def test_todo_title_with_revision_words_keeps_normal_todo_authorization(tmp_path):
     import json
 
@@ -649,3 +708,21 @@ def test_refused_sync_can_be_replaced_by_separately_confirmed_unjoined_diff(tmp_
         assert done["roadmap"]["nodes"][0] == route["nodes"][0]
         assert done["roadmap"]["nodes"][1]["estimated_minutes"] == 20
         assert done["roadmap"]["revision_proposals"][1]["status"] == "pending"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "不要把这条路线改简单，先保持原状。",
+        "这条路线太难了，但先不要调整我的路线。",
+        "暂不调整这条路线，先保持原状。",
+        "不要修改路线中已完成的节点。",
+    ],
+)
+def test_negated_revision_does_not_request_a_model_or_save_proposal(tmp_path, content):
+    with roadmap_client(tmp_path, []) as c:
+        generated, _ = submit(c, REQUEST)
+        route = generated["roadmap"]
+        result, _ = submit(c, content, "negative", generated["session_id"])
+        assert result["model_calls"] == 0
+        assert c.get(f"/api/roadmaps/{route['id']}").json() == route
