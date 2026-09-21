@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app import learning_requests as learning_request_store
 from app import roadmap_store
 from app.memory_policy import overlaps
 from app.todos import Clarification
@@ -67,6 +68,7 @@ class Store:
                     created_at TEXT NOT NULL);
             """)
             db.executescript(roadmap_store.SCHEMA)
+            db.executescript(learning_request_store.SCHEMA)
             columns = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
             if "roadmap" not in columns:
                 db.execute(
@@ -285,6 +287,38 @@ class Store:
                 }
                 for r in db.execute("SELECT * FROM roadmaps ORDER BY rowid DESC")
             ]
+
+    def learning_requests(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            return learning_request_store.read_all(db)
+
+    def save_learning_request(
+        self,
+        run: dict[str, Any],
+        intake: learning_request_store.Intake,
+        snapshot: list[dict[str, Any]],
+        loaded: list[dict[str, Any]],
+        revision: int,
+        *,
+        new_intent: bool,
+        selected_id: str | None,
+    ) -> dict[str, Any]:
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if self._memory_revision(db) != revision:
+                raise Clarification("记忆已更新，请重新补充以采用最新状态。")
+            saved = learning_request_store.save(
+                db,
+                run,
+                intake,
+                snapshot,
+                loaded,
+                revision,
+                new_intent=new_intent,
+                selected_id=selected_id,
+            )
+            self._event(db, run["id"], "learning_request_saved", saved)
+            return saved
 
     def roadmap(self, roadmap_id: str) -> dict[str, Any] | None:
         with self.connect() as db:
@@ -627,6 +661,9 @@ class Store:
             ids = []
             if roadmap:
                 saved_roadmap = roadmap_store.save(db, run, roadmap)
+                learning_request_store.complete(
+                    db, run_id, saved_roadmap["id"], self._memory_revision(db)
+                )
                 db.execute(
                     "UPDATE runs SET roadmap=? WHERE id=?",
                     (

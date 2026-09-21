@@ -62,6 +62,7 @@ class Action(BaseModel):
         "delete_memory",
         "reprocess_memory",
         "accept_roadmap_node",
+        "continue_learning",
     ]
     arguments: dict[str, Any]
 

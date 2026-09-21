@@ -189,9 +189,13 @@ async def research_learning(
                 )
                 record["status"] = "partial"
         if route_answer:
-            store.memory_record(
-                run_id, usage=[u.model_dump() for u in route_answer.memory_usage]
+            current = store.run(run_id)
+            assert current is not None
+            usage = {u["memory_id"]: u for u in current["memory"].get("usage", [])}
+            usage.update(
+                {u.memory_id: u.model_dump() for u in route_answer.memory_usage}
             )
+            store.memory_record(run_id, usage=list(usage.values()))
         finish_roadmap(store, run, record, route_answer)
         return
     if not record["sources"]:
