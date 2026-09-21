@@ -55,7 +55,8 @@ async def chat_schedule(
         return None
     text = unquoted_request(content)
     if not scheduling_request(text) or re.search(
-        r"不要|不用|不需要|不必|无需|别|如果|假如|比如|例如|解释|翻译|什么意思|是否|要不要",
+        r"不要|不用|不需要|不必|无需|别|如果|假如|比如|例如|解释|翻译|什么意思|是否|要不要|"
+        r"不(?:想|打算|做|进行)?(?:再|自动)?(?:排期|安排.{0,4}日期)",
         text,
     ):
         raise Clarification("本轮没有明确排期授权，未生成或修改日期方案。")

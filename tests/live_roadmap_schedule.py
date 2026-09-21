@@ -55,7 +55,7 @@ def main():
         todos = c.get("/api/todos").json()
         preview, events = submit(
             c,
-            f"请为路线 {route['id']} 排期，从明天开始，每天可学习30分钟。",
+            f"请为路线「{route['title']}」排期，从明天开始，每天可学习1小时30分钟。",
             "preview",
             session,
         )
@@ -72,7 +72,7 @@ def main():
             ZoneInfo(settings.user_timezone)
         ).date() + timedelta(days=1)
         assert proposal["entries"][0]["allocations"][0]["date"] == tomorrow.isoformat()
-        assert proposal["basis"]["daily_minutes"] == 30
+        assert proposal["basis"]["daily_minutes"] == 90
         assert c.get("/api/todos").json() == todos
         daily = {}
         for node, item in zip(route["nodes"], proposal["entries"], strict=True):
@@ -84,7 +84,7 @@ def main():
                 daily[allocation["date"]] = (
                     daily.get(allocation["date"], 0) + allocation["minutes"]
                 )
-        assert max(daily.values()) <= 30
+        assert max(daily.values()) <= 90
         done, events = action(
             c,
             session,

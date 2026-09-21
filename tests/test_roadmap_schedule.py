@@ -440,6 +440,9 @@ def test_schedule_survives_real_process_death(tmp_path, after_commit, operation)
     "content",
     [
         "不要为路线排期",
+        "这条路线暂不排期，从2026-10-01开始每天30分钟只是备选条件",
+        "这条路线不安排日期",
+        "这条路线不排期",
         "解释一下路线排期是什么意思",
         "他说‘请为路线排期’，这句话什么意思",
     ],
