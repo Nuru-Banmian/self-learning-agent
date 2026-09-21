@@ -6,6 +6,7 @@ import threading
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
@@ -531,3 +532,83 @@ def test_time_budget_not_required_when_it_does_not_affect_requested_overview(tmp
         assert request["known"]["time_budget"] is None
         assert request["questions"] == []
         assert c.get("/api/todos").json() == []
+
+
+@pytest.mark.parametrize(
+    ("extra_context", "can_search"),
+    [
+        ("", True),
+        ("练习时可以先记录输入和输出，然后整理理解情况。" * 24, True),
+        ("练习时可以先记录输入和输出，然后整理理解情况。" * 48, False),
+    ],
+    ids=["short", "long-reply-preserves-constraints", "over-limit-keeps-pending"],
+)
+def test_search_parameters_follow_target_scoped_memory_selection(
+    tmp_path, extra_context, can_search
+):
+    base = intake_provider([])
+
+    def provider(request):
+        body = json.loads(request.content)
+        if "response_format" in body:
+            source = json.loads(body["messages"][-1]["content"])
+            proposals = (
+                [candidate(source)] if source["content"] == "我喜欢官方资料" else []
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": json.dumps({"candidates": proposals})}}
+                    ]
+                },
+            )
+        if body.get("messages", [{}])[-1].get("content") == "我喜欢官方资料":
+            return httpx.Response(
+                200,
+                json=operation_response(
+                    "answer_question", {"reply": "收到", "memory_usage": []}
+                ),
+            )
+        response = base(request)
+        if (
+            body.get("tools", [{}])[0].get("function", {}).get("name")
+            == "plan_learning_roadmap"
+        ):
+            context = json.loads(body["messages"][1]["content"])
+            payload = response.json()
+            call = payload["choices"][0]["message"]["tool_calls"][0]["function"]
+            args = json.loads(call["arguments"])
+            args["memory_ids"] = [m["id"] for m in context["memories"]]
+            if args["memory_ids"]:
+                args["query"] = "Redis cache 官方资料"
+            call["arguments"] = json.dumps(args)
+            return httpx.Response(200, json=payload)
+        return response
+
+    with roadmap_client(tmp_path, [], provider) as c:
+        submit(c, "我喜欢官方资料", "preference")
+        submit(
+            c,
+            "我想学习 Redis，有 Python 基础，每次30分钟，"
+            "这次只看视频，限定 site:bilibili.com",
+            "start",
+        )
+        run, _ = submit(c, "目标是实现缓存。" + extra_context, "reply")
+        if not can_search:
+            assert "过长" in run["reply"]
+            assert "概括" in run["reply"]
+            assert not run["research"]
+            assert c.get("/api/roadmaps").json() == []
+            pending = c.get("/api/learning-requests").json()[0]
+            assert pending["roadmap_id"] is None
+            assert (
+                pending["messages"][-1]["content"] == "目标是实现缓存。" + extra_context
+            )
+            assert c.get("/api/todos").json() == []
+            return
+        assert run["roadmap"], run
+        assert run["research"]["task"]["memory_ids"] == []
+        assert "官方资料" not in run["research"]["task"]["query"]
+        assert "视频" in run["research"]["task"]["query"]
+        assert "site:bilibili.com" in run["research"]["task"]["query"]

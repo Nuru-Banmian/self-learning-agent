@@ -14,6 +14,7 @@ from app.memory_changes import chat_memory_change, prepare_memory_change
 from app.memory_policy import mixed_todo_content
 from app.model import MODEL, TOOLS, ModelError, call_model
 from app.research import (
+    ResearchTask,
     explicit_search,
     finish_research,
     memory_query,
@@ -326,6 +327,10 @@ async def execute(
                     )
                 if tool == "plan_learning_roadmap":
                     intake = Intake.model_validate(arguments.pop("intake"))
+                    task = ResearchTask.model_validate(arguments)
+                    model_memory_ids = {m["id"] for m in loaded}
+                    if not set(task.memory_ids) <= model_memory_ids:
+                        raise Clarification("查询引用了未加载记忆，请重新提问。")
                     target = next(
                         (r for r in context_requests if r["id"] == intake.request_id),
                         None,
@@ -343,6 +348,17 @@ async def execute(
                         local,
                         learning_context=True,
                     )
+                    scoped_ids = {m["id"] for m in loaded}
+                    if model_memory_ids - scoped_ids:
+                        task.memory_ids = [
+                            i for i in task.memory_ids if i in scoped_ids
+                        ]
+                        # Search text may also encode an excluded preference. Use
+                        # the grounded goal and all user constraints in that case.
+                        task.query = (
+                            f"{intake.topic} {intake.goal or ''} " + request_content
+                        )
+                    arguments = task.model_dump()
                     store.memory_record(run_id, loaded=loaded, usage=[])
                     saved = store.save_learning_request(
                         run,
@@ -377,6 +393,11 @@ async def execute(
                         "content": "\n".join(m["content"] for m in saved["messages"]),
                         "learning_constraints": saved["known"],
                     }
+                    if len(task.query) > 1024:
+                        raise Clarification(
+                            "学习需求已保存，但完整搜索条件过长；"
+                            "请概括主题、目标和资料限制后重新发起学习需求。未搜索或生成路线。"
+                        )
                 await research_learning(
                     store,
                     settings,
