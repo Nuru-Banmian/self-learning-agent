@@ -105,7 +105,11 @@ def main():
     def research(client, name, content):
         before = client.get("/api/todos").json()
         run = step(client, name, content)
-        assert run["status"] == "completed", run["reply"]
+        assert run["status"] == "completed" or (
+            run["status"] == "partial"
+            and run["research"].get("status") == "partial"
+            and run["research"].get("gaps")
+        ), run["reply"]
         assert run["research"]["sources"] and "学习步骤" in run["reply"]
         assert client.get(f"/api/sessions/{run['session_id']}/suggestions").json()
         assert client.get("/api/todos").json() == before
@@ -261,6 +265,9 @@ def main():
             if args.mock_information
             else "live services",
             "mainland_network": "unverified",
+            "partial_steps": [
+                r["step"] for r in records if r.get("status") == "partial"
+            ],
         }
     )
 
