@@ -165,6 +165,8 @@ def test_single_node_acceptance_survives_cross_session_replay_without_model(tmp_
         "解释一下学习路线是什么意思",
         "他说‘我想学习 Redis’，这句话什么意思",
         "我想学习 Redis，但不要搜索",
+        REQUEST + "，不要在网上搜索资料",
+        REQUEST + "，不要再帮我搜索",
         "请记录明天学习 Redis",
     ],
 )
@@ -188,7 +190,8 @@ def test_learning_without_dates_still_generates_route(tmp_path):
     "content",
     [
         "我有 Python 基础，想学习 Redis，目标是实现缓存，每次可投入30分钟",
-        "我想学习 Redis 的数据记录和过期，有 Python 基础，目标是实现缓存，每次可投入30分钟",
+        "我想学习 Redis 的数据记录和过期，有 Python 基础，"
+        "目标是实现缓存，每次可投入30分钟",
         REQUEST + "，暂时不要加入待办",
         "我想学习 Redis 的‘SET’命令，有 Python 基础，目标是实现缓存，每次可投入30分钟",
     ],
