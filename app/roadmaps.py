@@ -292,7 +292,11 @@ def finish_roadmap(
         ]
         official_requested = any(
             "官方" in clause
-            and not re.search(r"不要|不用|不需要|不必|无需|别|不看|不读", clause)
+            and not re.search(
+                r"(?:不要|不用|不需要|不必|无需|别|不)"
+                r"(?:再|给我|为我|帮我|优先|推荐|查找|搜索|阅读|使用|采用|喜欢|看|读|找|搜|用)*官方",
+                clause,
+            )
             for clause in re.split(
                 r"[，,。；;！？!?\n]", unquoted_request(run["content"])
             )

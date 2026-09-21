@@ -116,6 +116,7 @@ def roadmap_client(tmp_path, requests, provider=None, **settings):
         (REQUEST + "，优先官方资料", False, True),
         (REQUEST + "，这次只看视频", True, False),
         (REQUEST + "，这次不要官方资料，只看视频", True, False),
+        (REQUEST + "，这次优先官方资料但不要视频", False, True),
     ],
 )
 def test_official_preference_uncertainty_survives_model_omission_and_restart(
