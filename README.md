@@ -10,6 +10,8 @@
 
 ## 本地启动（Windows PowerShell）
 
+Issue #19 已实现有来源的学习路线、跨会话列表/详情和单节点加入待办。例如“我想学习 Redis，有 Python 基础，目标是实现缓存，每次可投入30分钟”。路线自动搜索并保存，每个节点包含目标、预计耗时、资料、练习和完成标准；生成或暂不加入不改待办，明确选中节点后只创建一条默认未安排日期的关联待办。可从待办跳回完整节点内容。普通行动建议仍限当前会话；批量加入、进度、排期、调整和多轮澄清留给后续任务。真实 Redis/Python 联调为部分成功，资料偏好和内容质量限制见 [Issue #19 验收记录](docs/acceptance/issue-19.md)。
+
 Issue #8 已补充持久排队、断线/重启状态恢复和安全重试，详情见 [验收记录](docs/acceptance/issue-8.md)。
 
 Issue #9 已补充学习证据、跨会话对比和人工检查点；该阶段的175项测试、模拟信息服务与未配置项记录作为历史保留，见 [逐项验收证据](docs/acceptance/issue-9.md) 与 [复演说明](docs/acceptance/issue-9-demo.md)。
@@ -104,6 +106,7 @@ cd ..
 | `GET /api/sessions/{id}` | 读取会话、消息、有序 run_ids 和 latest_run_id |
 | `POST /api/sessions/{id}/messages` | 提交 `{request_id, content, action?}`，返回 202 和执行状态；action 是用户明确选择的面板操作 |
 | `GET /api/sessions/{id}/suggestions` | 当前会话的行动建议、来源执行标识、计划日期及转成的待办 ID |
+| `GET /api/roadmaps`、`GET /api/roadmaps/{id}` | 跨会话路线列表与节点详情、持久资料和真实关联待办；接受节点复用 messages 的 `accept_roadmap_node` action，提交 `roadmap_id`、`node_id`、`expected_version` |
 | `GET /api/runs/{request_id}` | 原子快照：执行状态、queue_position、关联 messages、有序 events、实际写入 ID、回复、调用计数、retryable/retry_of/retry_run_id，以及 memory/research/weather 证据 |
 | `POST /api/runs/{request_id}/retry` | 无请求正文；显式重试失败或尚无主结果提交的部分完成请求，返回 202 及关联执行；重复调用返回同一子执行，已完成/已提交写入则返回原记录 |
 | `GET /api/runs/{request_id}/events` | SSE：角色、工具调用/结果、保存、回复与终态，支持 `Last-Event-ID` |
