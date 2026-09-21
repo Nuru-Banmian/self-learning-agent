@@ -18,7 +18,13 @@ from app.research import (
     memory_query,
     research_learning,
 )
-from app.roadmaps import NodeSelection, chat_selection, explicit_roadmap, finish_roadmap
+from app.roadmaps import (
+    NodeSelection,
+    chat_selection,
+    explicit_roadmap,
+    finish_roadmap,
+    roadmap_blocked,
+)
 from app.settings import Settings
 from app.store import Store
 from app.todos import (
@@ -238,9 +244,7 @@ async def execute(
             if not isinstance(arguments, dict):
                 raise ValueError("模型操作参数无效，未修改待办。")
             if tool in ("research_learning", "plan_learning_roadmap"):
-                if tool == "plan_learning_roadmap" and not explicit_roadmap(
-                    run["content"]
-                ):
+                if tool == "plan_learning_roadmap" and roadmap_blocked(run["content"]):
                     raise Clarification(
                         "本轮未生成路线。需要学习路线时请明确主题和学习目标。"
                     )

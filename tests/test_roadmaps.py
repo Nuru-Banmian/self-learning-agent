@@ -185,6 +185,24 @@ def test_learning_without_dates_still_generates_route(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "content",
+    [
+        "我有 Python 基础，想学习 Redis，目标是实现缓存，每次可投入30分钟",
+        "我想学习 Redis 的数据记录和过期，有 Python 基础，目标是实现缓存，每次可投入30分钟",
+        REQUEST + "，暂时不要加入待办",
+        "我想学习 Redis 的‘SET’命令，有 Python 基础，目标是实现缓存，每次可投入30分钟",
+    ],
+)
+def test_complete_learning_intent_does_not_require_fixed_words(tmp_path, content):
+    requests = []
+    with roadmap_client(tmp_path, requests) as c:
+        run, _ = submit(c, content)
+        assert run["roadmap"]
+        assert any("/search/unified" in url for url, _ in requests)
+        assert c.get("/api/todos").json() == []
+
+
+@pytest.mark.parametrize(
     "kind,expected,has_route",
     [
         ("empty", "empty", False),

@@ -71,19 +71,32 @@ def chat_selection(store: Store, content: str) -> NodeSelection | None:
     return targets[0]
 
 
+def unquoted_request(content: str) -> str:
+    return re.sub(r'“[^”]*”|‘[^’]*’|「[^」]*」|"[^"]*"|\'[^\']*\'', "", content)
+
+
+def roadmap_blocked(content: str) -> bool:
+    text = unquoted_request(content)
+    return bool(
+        re.search(
+            r"(?:不要|不用|不需要|不必|无需|别)(?:再|自动|帮我|为我|去|进行)?"
+            r"(?:搜索|查找|联网|路线|生成路线|规划|学习)|(?:不|没)想学|"
+            r"不(?:搜索|学习)|什么意思|这句话|(?:例如|比如|假如|如果).{0,8}我想学|"
+            r"(?:^|[，,。；;])\s*(?:请帮我|请|帮我)?(?:解释|说明|记录|记下|添加待办|创建待办)",
+            text,
+        )
+        or (text != content and not re.search(r"学|路线", text))
+    )
+
+
 def explicit_roadmap(content: str) -> bool:
-    if re.search(
-        r"(?:不要|不用|不需要|不必|无需|别).{0,6}(?:搜索|查找|联网|路线|规划|学习)|"
-        r"解释|什么意思|这句话|例如|比如|假如|如果|"
-        r"记录|待办|[‘’“”\"'「」]|(?:不|没)想学|不(?:搜索|学习)",
-        content,
-    ):
+    if roadmap_blocked(content):
         return False
     return bool(
         re.search(
-            r"(?:^|[，,。；;])\s*(?:(?:我想|我要|我希望|我打算)(?:学习|学会|学)|"
+            r"(?:^|[，,。；;])\s*(?:(?:我)?(?:想|要|希望|打算)(?:学习|学会|学)|"
             r"(?:请|帮我|请帮我)?(?:规划|制定|生成).{0,30}学习路线)",
-            content,
+            unquoted_request(content),
         )
     )
 
