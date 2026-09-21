@@ -173,7 +173,18 @@ def main():
             )
             assert transfer["memory"]["loaded"] and transfer["memory"]["usage"]
             assert "官方" in transfer["research"]["task"]["query"]
-            step(client, "correct", "更正：我喜欢优先观看视频资料")
+            correction = step(client, "correct", "更正：我喜欢优先观看视频资料")
+            if not correction["memory"].get("changed_ids"):
+                # Topic extraction varies with the real model. Honor the public
+                # clarification, then explicitly target the memory we just saved.
+                assert "无法唯一定位旧记忆" in correction["reply"]
+                correction = step(
+                    client,
+                    "correct-resolved",
+                    f"把记忆 {learned['memory']['saved_ids'][0]} "
+                    "改为 我喜欢优先观看视频资料",
+                )
+            assert correction["memory"].get("changed_ids")
             corrected = research(
                 client, "corrected", "请查找 Python 装饰器学习资料，并给一个小练习"
             )
