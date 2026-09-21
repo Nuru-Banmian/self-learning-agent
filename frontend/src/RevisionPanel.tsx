@@ -108,6 +108,10 @@ export function RevisionPanel({ route, disabled, act }: {
         tool: "preview_roadmap_revision", arguments: { roadmap_id: route.id, expected_version: route.version, title, goal, nodes },
       })}>预览手动调整</button>
     </details>
-    {route.revision_proposals.map(p => <Proposal key={p.id} proposal={p} route={route} disabled={disabled} act={act} />)}
+    {route.revision_proposals.filter(p => p.status === "pending").map(p => <Proposal key={p.id} proposal={p} route={route} disabled={disabled} act={act} />)}
+    {route.revision_proposals.some(p => p.status !== "pending") && <details>
+      <summary>历史调整方案</summary>
+      {route.revision_proposals.filter(p => p.status !== "pending").map(p => <Proposal key={p.id} proposal={p} route={route} disabled={disabled} act={act} />)}
+    </details>}
   </section>;
 }

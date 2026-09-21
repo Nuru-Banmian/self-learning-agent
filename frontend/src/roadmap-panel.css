@@ -1,0 +1,130 @@
+.roadmap-nodes {
+  margin: 1rem 0;
+  padding: 0;
+  list-style: none;
+}
+.roadmaps article,
+.roadmaps section,
+.roadmaps li,
+.roadmaps details,
+.roadmaps fieldset {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.roadmaps nav [aria-current="location"] {
+  border-color: #7c946d;
+  background: #f1f4eb;
+}
+.roadmap-node:focus {
+  outline: 2px solid #78966a;
+  outline-offset: 3px;
+}
+.roadmap-node-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.roadmaps .roadmap-node-controls label {
+  margin: 0;
+}
+.roadmaps .roadmap-node-details {
+  margin-bottom: 0;
+  padding-top: 10px;
+  border-top: 1px solid #e3e8db;
+}
+.roadmap-node-details > p,
+.roadmap-node-details .source-body {
+  white-space: pre-wrap;
+}
+.roadmap-node-details > small {
+  display: block;
+  margin-top: 12px;
+  color: #687760;
+}
+.roadmap-tools > summary,
+.roadmap-history > summary {
+  padding: 10px 0;
+}
+.roadmaps .roadmap-limitations {
+  padding: 0 14px;
+  border-left: 3px solid #b39955;
+}
+.roadmap-limitations > p {
+  margin-bottom: 0;
+}
+.message-roadmap-links,
+.run-roadmap-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.message-roadmap-links a,
+.run-roadmap-links a {
+  display: inline-block;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #dce2d4;
+  border-radius: 6px;
+  color: #4a6d40;
+  background: #f7f9f1;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.research-disclosure {
+  margin-top: 18px;
+  padding: 0 20px;
+}
+.research-disclosure > summary {
+  padding: 12px 0;
+  color: #53664b;
+  font-size: 13px;
+}
+.research-disclosure .research {
+  margin-top: 0;
+  padding: 0;
+}
+.research-disclosure .research > h2 {
+  display: none;
+}
+.learning-outcomes {
+  margin-bottom: 20px;
+}
+.learning-outcomes .activity-note {
+  margin: 10px 0;
+  align-items: start;
+}
+.learning-outcomes .activity-note p {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+}
+.learning-outcomes .activity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+@media (max-width: 480px) {
+  .roadmaps label:not(.roadmap-node-controls label) {
+    flex-wrap: wrap;
+  }
+  .roadmaps input:not([type="checkbox"]),
+  .roadmaps textarea,
+  .roadmaps select {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .roadmaps button {
+    max-width: 100%;
+    white-space: normal;
+  }
+  .roadmap-confirmation {
+    padding: 12px;
+  }
+  .roadmaps fieldset {
+    margin-left: 0;
+    margin-right: 0;
+    padding: 8px;
+  }
+}

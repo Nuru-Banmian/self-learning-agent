@@ -8,12 +8,19 @@
 * {
   box-sizing: border-box;
 }
+[hidden] {
+  display: none !important;
+}
+html {
+  scrollbar-gutter: stable;
+}
 body {
   margin: 0;
 }
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 button {
@@ -31,19 +38,19 @@ summary:focus-visible {
   outline-offset: 4px;
 }
 main {
-  max-width: 1260px;
+  max-width: 1320px;
   margin: auto;
-  padding: 0 42px;
+  padding: 0 40px;
 }
-header {
-  height: 88px;
+.app-header {
+  height: 76px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid #dedfd7;
 }
 .brand {
-  font-size: 27px;
+  font-size: 24px;
   font-weight: 800;
   text-decoration: none;
   color: #294e3e;
@@ -70,7 +77,11 @@ header {
   border-radius: 50%;
 }
 .intro {
-  padding: 42px 0 32px;
+  padding: 30px 0 26px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
 }
 .eyebrow {
   font-size: 11px;
@@ -79,26 +90,26 @@ header {
   margin: 0 0 12px;
 }
 .intro h1 {
-  font-size: 34px;
+  font-size: 29px;
   letter-spacing: 1px;
   font-weight: 600;
   margin: 0 0 10px;
 }
-.intro > p:last-child {
+.intro > div > p:last-child {
   color: #7b8177;
   font-size: 14px;
   margin: 0;
 }
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);
+  grid-template-columns: minmax(0, 1fr) 330px;
   gap: 24px;
   align-items: start;
 }
 .panel {
   border: 1px solid #dedfd5;
   background: #fffefa;
-  border-radius: 16px;
+  border-radius: 14px;
   overflow: hidden;
 }
 .panel-head {
@@ -120,13 +131,13 @@ h2 {
   padding: 5px;
 }
 .messages {
-  min-height: 300px;
+  min-height: 310px;
   max-height: 440px;
   overflow-y: auto;
   padding: 24px;
 }
 .welcome {
-  padding: 26px 10px 45px;
+  padding: 24px 12px 28px;
 }
 .spark {
   font-size: 32px;
@@ -165,7 +176,7 @@ h2 {
   background: #f1f3eb;
   border-radius: 12px;
   padding: 14px 18px;
-  margin-left: 30px;
+  margin-left: 60px;
 }
 .status {
   padding: 10px 24px;
@@ -244,50 +255,6 @@ small {
   padding: 0 24px;
   margin: 14px 0;
 }
-.todos ul {
-  padding: 0 24px;
-  list-style: none;
-  max-height: 550px;
-  overflow: auto;
-}
-.todos li {
-  border-bottom: 1px solid #e8eade;
-  padding: 18px 0;
-}
-.todos li:last-child {
-  border-bottom: 0;
-}
-.todo-title {
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-}
-.todo-title h3 {
-  font-size: 15px;
-  font-weight: 500;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-.checkbox {
-  width: 13px;
-  height: 13px;
-  flex-shrink: 0;
-  border: 1px solid #bdc8b4;
-  border-radius: 4px;
-}
-.meta {
-  display: flex;
-  gap: 12px;
-  margin: 8px 0 0 23px;
-  font-size: 11px;
-  color: #858d7b;
-}
-.meta time {
-  background: #f0f2e8;
-  padding: 1px 7px;
-  border-radius: 4px;
-  color: #6e7d5c;
-}
 details {
   margin: 10px 0 0 23px;
   font-size: 11px;
@@ -348,11 +315,6 @@ footer {
   color: #744e28;
   background: #f1dfc5;
 }
-.todo-group > h3 {
-  padding: 0 24px;
-  font-size: 13px;
-  color: #6e7d5c;
-}
 .todo-actions {
   margin-left: 23px;
 }
@@ -386,7 +348,7 @@ footer {
   main {
     padding: 0 18px;
   }
-  header {
+  .app-header {
     height: 70px;
   }
   .intro {
@@ -419,7 +381,7 @@ footer {
   }
 }
 .memory-panel {
-  margin-top: 24px;
+  margin-top: 0;
   padding: 24px;
 }
 .memory-columns {
@@ -505,10 +467,452 @@ footer {
   padding: 12px 0;
 }
 /* Durable learning content shares the workbench's existing card treatment. */
-.roadmap-link { display: block; margin: 0.7rem 0; overflow-wrap: anywhere; }
-.roadmaps h4 { margin-bottom: 0.5rem; }
-.roadmaps details { margin: 0.75rem 0; }
-.roadmaps section { scroll-margin-top: 1.5rem; }
-.roadmap-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
-.roadmap-confirmation { margin: 1rem 0; padding: 1rem; border: 1px solid #dfe3d7; border-radius: 8px; background: #f6f8f1; }
-.roadmaps label { display: flex; align-items: center; gap: 0.5rem; }
+.roadmap-link {
+  display: block;
+  margin: 0.7rem 0;
+  overflow-wrap: anywhere;
+}
+.roadmaps h4 {
+  margin-bottom: 0.5rem;
+}
+.roadmaps details {
+  margin: 0.75rem 0;
+}
+.roadmaps section {
+  scroll-margin-top: 1.5rem;
+}
+.roadmap-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.roadmap-confirmation {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid #dfe3d7;
+  border-radius: 8px;
+  background: #f6f8f1;
+}
+.roadmaps label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Workbench navigation keeps daily conversation separate from saved collections. */
+.workspace-nav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #dedfd7;
+}
+.workspace-nav a {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 20px;
+  border-radius: 8px;
+  color: #747d70;
+  text-decoration: none;
+  font-size: 13px;
+  transition:
+    background 150ms,
+    color 150ms;
+}
+.workspace-nav a:hover {
+  background: #eeeee6;
+  color: #365846;
+}
+.workspace-nav a[aria-current="page"] {
+  background: #365846;
+  color: #fff;
+}
+.workspace-nav a > span {
+  padding: 0 6px;
+  background: #e4e9dc;
+  border-radius: 5px;
+  color: #52704c;
+  font-size: 10px;
+}
+.workspace-nav a[aria-current="page"] > span {
+  background: #ffffff24;
+  color: #fff;
+}
+.nav-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #b58c4c;
+}
+.today-label {
+  display: grid;
+  text-align: right;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.today-label span {
+  color: #899080;
+  font-size: 11px;
+  letter-spacing: 2px;
+}
+.today-label time {
+  color: #62735c;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.chat-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.chat-heading p {
+  font-size: 11px;
+  color: #85907f;
+  margin: 2px 0 0;
+}
+.assistant-mark {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: #edf1e6;
+  color: #698667;
+  font-size: 25px;
+}
+.starter-prompts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 22px;
+}
+.starter-prompts button {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  padding: 9px 12px;
+  border: 1px solid #dfe4d7;
+  border-radius: 7px;
+  color: #62745a;
+  background: transparent;
+  font-size: 11px;
+}
+.starter-prompts button:hover {
+  background: #f1f4eb;
+}
+.starter-prompts span {
+  color: #84957b;
+}
+.quiet:hover:not(:disabled) {
+  background: #edf1e6;
+  border-radius: 5px;
+  color: #365846;
+}
+.primary:hover:not(:disabled) {
+  background: #294635;
+}
+.overview-column {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+.plan-prompt {
+  padding: 23px;
+  background: #eef0e7;
+  border: 1px solid #e1e5d8;
+  border-radius: 14px;
+}
+.plan-prompt .eyebrow {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 2px;
+}
+.plan-prompt h2 {
+  font-size: 16px;
+}
+.plan-prompt p {
+  font-size: 12px;
+  color: #7a8570;
+  line-height: 1.8;
+  margin: 10px 0 20px;
+}
+.plan-button {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  color: #48633f;
+  padding: 0;
+  font-size: 12px;
+}
+.plan-button:hover {
+  color: #263e22;
+}
+.execution-history {
+  margin: 0;
+  border-top: 1px solid #e9ece2;
+  font-size: 12px;
+  color: #718066;
+}
+.execution-history > summary {
+  padding: 15px 24px;
+}
+.execution-history > summary > span {
+  float: right;
+  font-size: 10px;
+  color: #939c8b;
+}
+.execution-history[open] > summary {
+  border-bottom: 1px solid #edf0e7;
+}
+.execution-history > section {
+  max-height: 400px;
+  overflow: auto;
+}
+.learning-shortcut {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 17px 24px;
+  border-top: 1px solid #edf0e7;
+  color: #516e43;
+  text-decoration: none;
+}
+.learning-shortcut strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+}
+.learning-shortcut small {
+  display: block;
+  margin-top: 3px;
+}
+.learning-shortcut:hover {
+  background: #f4f6ee;
+}
+.learning-view {
+  padding: 28px;
+}
+.view-intro {
+  margin-bottom: 28px;
+}
+.view-intro h2 {
+  font-size: 23px;
+}
+.view-intro > p:last-child {
+  font-size: 13px;
+  color: #7b8771;
+}
+.learning-view > .suggestions {
+  padding: 24px 0 8px;
+}
+.learning-view .list-note {
+  padding: 0;
+}
+.learning-view .suggestion {
+  padding: 18px;
+  margin: 16px 0;
+  border: 1px solid #e3e8db;
+  border-radius: 10px;
+  background: #fcfcf7;
+}
+.learning-view button:not(.primary):not(.quiet) {
+  padding: 7px 12px;
+  border-radius: 6px;
+  background: #e8edde;
+  color: #4a653d;
+  font-size: 12px;
+}
+.learning-view button:hover:not(:disabled) {
+  filter: brightness(0.97);
+}
+.learning-view input:not([type="checkbox"]),
+.learning-view select {
+  max-width: 100%;
+  border: 1px solid #dce2d4;
+  border-radius: 6px;
+  background: #fffefa;
+  padding: 7px;
+  color: #405438;
+}
+.roadmaps .roadmap-link {
+  color: #4a6d40;
+  font-size: 13px;
+}
+.roadmaps nav .roadmap-link {
+  padding: 13px 16px;
+  border: 1px solid #e3e8db;
+  border-radius: 8px;
+  text-decoration: none;
+}
+.roadmaps nav .roadmap-link:hover {
+  background: #f1f4eb;
+}
+.memory-panel .panel-head {
+  padding: 0 0 18px;
+}
+.memory-panel > .list-note {
+  padding: 0;
+  margin: 18px 0 28px;
+}
+.memory-columns h3 {
+  font-size: 14px;
+  font-weight: 500;
+}
+.memory-columns p {
+  font-size: 13px;
+}
+.evidence-disclosure {
+  margin: 20px 0 0;
+  color: #59704e;
+}
+.evidence-disclosure > summary {
+  padding: 22px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  list-style: none;
+}
+.evidence-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.evidence-disclosure > summary small {
+  display: block;
+  margin-top: 4px;
+}
+.evidence-disclosure[open] > summary > span:last-child {
+  transform: rotate(45deg);
+}
+.evidence-disclosure .evidence-panel {
+  border: 0;
+  border-top: 1px solid #e5eadf;
+  margin: 0;
+  border-radius: 0;
+}
+.activity-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: #eef2e6;
+  color: #687d5d;
+  padding: 12px 18px;
+  margin-bottom: 16px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.activity-attention {
+  background: #faf0e1;
+  color: #946a3d;
+}
+main > .error {
+  border-radius: 8px;
+  margin-bottom: 18px;
+}
+@media (max-width: 1000px) {
+  main {
+    padding: 0 24px;
+  }
+  .workspace {
+    grid-template-columns: minmax(0, 1fr) 290px;
+    gap: 18px;
+  }
+  .panel-head {
+    padding: 18px;
+  }
+  .chat-heading {
+    gap: 9px;
+  }
+  .chat-heading p {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  main {
+    padding: 0 16px;
+  }
+  .app-header {
+    height: 64px;
+  }
+  .intro {
+    padding: 24px 0;
+  }
+  .intro h1 {
+    font-size: 24px;
+    letter-spacing: 0;
+  }
+  .intro .eyebrow {
+    font-size: 10px;
+  }
+  .intro > div > p:last-child {
+    font-size: 12px;
+  }
+  .today-label {
+    display: none;
+  }
+  .workspace-nav {
+    gap: 4px;
+    margin-bottom: 18px;
+  }
+  .workspace-nav a {
+    padding: 8px 12px;
+    gap: 5px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .messages {
+    min-height: 250px;
+    max-height: 440px;
+  }
+  .welcome {
+    padding: 12px 0;
+  }
+  .message.user {
+    margin-left: 20px;
+  }
+  .starter-prompts {
+    gap: 7px;
+  }
+  .starter-prompts button {
+    gap: 10px;
+    padding: 8px 10px;
+  }
+  .composer-bottom {
+    gap: 12px;
+  }
+  .composer-bottom small {
+    max-width: 65%;
+  }
+  .composer-bottom .primary {
+    flex-shrink: 0;
+  }
+  .learning-view,
+  .memory-panel {
+    padding: 20px;
+  }
+  .learning-view .suggestion {
+    padding: 14px;
+  }
+  .memory-columns {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  footer {
+    margin: 24px 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

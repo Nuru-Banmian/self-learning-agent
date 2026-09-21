@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.memory import Usage
 from app.model import call_model
+from app.roadmap_presentation import render_route
 from app.settings import Settings
 from app.store import Store
 from app.todos import Clarification
@@ -16,6 +17,16 @@ from app.todos import Clarification
 
 class Node(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+    display_title: str = Field(
+        default="",
+        max_length=24,
+        description="短标题，概括本节点动作，不含代码、URL、分钟或资料编号。",
+    )
+    display_goal: str = Field(
+        default="",
+        max_length=56,
+        description="一句具体行动目标，保留关键动作，语义压缩且完整收句；不含代码、URL、分钟或资料编号。",
+    )
     goal: str = Field(min_length=1, max_length=300)
     estimated_minutes: int = Field(ge=1, le=480)
     source_ids: list[str] = Field(min_length=1, max_length=5)
@@ -35,6 +46,9 @@ class Node(BaseModel):
 class RoadmapAnswer(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
     title: str = Field(min_length=1, max_length=200)
+    display_title: str = Field(
+        default="", max_length=36, description="默认回复使用的简短路线名称。"
+    )
     goal: str = Field(min_length=1, max_length=400)
     nodes: list[Node] = Field(min_length=1, max_length=8)
     memory_usage: list[Usage] = Field(max_length=6)
@@ -216,12 +230,22 @@ async def compose_roadmap(
                     "涉及函数实参、输入文件或变量时给出确切测试输入和来源，不能让读者猜。"
                     "例如断言第4次迭代结束，必须在练习中指定仅产生3项的输入；"
                     "检查倒计时只要求合理范围，不保证调度耗时小于一秒。"
+                    "TTL可以等于设置的初始秒数，不要求严格小于初值，"
+                    "也不要求两次独立读取的TTL相等；测试过期时不能重新SET重置倒计时。"
+                    "每段代码明确在同一解释器继续还是新建/替换脚本；"
+                    "新进程不能引用上一进程的局部变量。追加代码后核对完整脚本的所有输出，"
+                    "不要把追加片段的输出说成整个脚本的唯一输出。"
+                    "未指定操作系统时用Python创建练习输入文件，"
+                    "避免依赖echo -e、grep等特定Shell命令。"
                     "所有练习只覆盖goal要求的最小闭环，删除检索材料附带的高级API专题；"
                     "不把无资源泄漏警告当作正确关闭文件的证明。"
                     "不要用无法证明的替代指标作完成标准。不确定的行为应标记缺口，不能承诺。"
                     "仅有摘要时如实使用摘要，不把第三方资料说成官方。"
                     "gaps说明资料不足、偏好未满足或无法支持的目标；不确定官方归属也明确说明。"
                     "用紧凑文字完成全部节点，避免过长输出。"
+                    "必须填写路线display_title以及每节点display_title和display_goal。"
+                    "这两项用于默认清单：短标题加一句具体目标，保留关键动作，"
+                    "不能复制长练习、代码、资料编号或预计分钟。完整操作仍放exercise。"
                 ),
             },
             {
@@ -261,10 +285,17 @@ async def compose_roadmap(
         raise ValueError("路线引用无效资料")
     if any(u.memory_id not in {m["id"] for m in loaded} for u in answer.memory_usage):
         raise ValueError("路线引用无效记忆")
-    texts = [answer.title, answer.goal] + answer.gaps
+    texts = [answer.title, answer.display_title, answer.goal] + answer.gaps
     for node in answer.nodes:
         texts.extend(
-            [node.goal, node.exercise, node.completion_criteria, node.todo_title]
+            [
+                node.goal,
+                node.exercise,
+                node.completion_criteria,
+                node.todo_title,
+                node.display_title,
+                node.display_goal,
+            ]
         )
     if any(
         re.search(r"https?://|www\.|已(?:读|阅读|通读|保存|添加|完成)", text, re.I)
@@ -273,6 +304,7 @@ async def compose_roadmap(
         raise ValueError("路线包含未验证的链接或执行声明")
     if len({n.todo_title for n in answer.nodes}) != len(answer.nodes):
         raise ValueError("路线包含重复候选")
+    render_route(answer.model_dump())
     return answer
 
 
@@ -310,6 +342,7 @@ def finish_roadmap(
             record["status"] = "partial"
         content = {
             "title": answer.title,
+            "display_title": answer.display_title,
             "goal": answer.goal,
             "request": run["content"],
             "memories": record["input_summary"]["memories"],
@@ -318,35 +351,16 @@ def finish_roadmap(
             "gaps": record["gaps"],
             "nodes": [n.model_dump() for n in answer.nodes],
         }
-        reply = f"学习路线：{answer.title}\n目标：{answer.goal}\n"
-        for i, node in enumerate(answer.nodes, 1):
-            reply += (
-                f"\n{i}. {node.goal}（预计 {node.estimated_minutes} 分钟）\n"
-                f"练习：{node.exercise}\n完成标准：{node.completion_criteria}\n"
-                f"资料：{', '.join(node.source_ids)}\n候选待办：{node.todo_title}\n"
-            )
-        reply += (
-            "\n路线已保存。是否加入待办？请在路线面板全选或选择部分节点后确认，"
-            "也可暂不加入。默认未安排日期。"
-        )
+        reply = render_route(content)
     else:
-        reply = "尚未生成有来源的学习路线；已有查询结果保留，未创建待办。"
-    for source in record["sources"]:
-        kind = (
-            "已取得正文（可能为截取片段）"
-            if source["material_type"] == "body"
-            else "仅搜索摘要，未读取正文"
-        )
-        reply += (
-            f"\n[{source['id']}] {source['title']}\n{source['url']}\n"
-            f"{kind}；搜索摘要：{source['snippet']}\n"
-        )
-    if record["gaps"]:
-        reply += "\n资料与安排缺口：\n" + "\n".join(record["gaps"])
+        reply = "尚未生成有来源的学习路线，未创建待办。请展开资料记录查看原因后重试。"
+    if record["gaps"] and not answer:
+        reply += "\n部分资料或处理未完成，请展开详情查看限制。"
     store.research_record(run["id"], record)
     store.finish(
         run["id"],
         "completed" if record["status"] == "success" and answer else "partial",
         reply,
         roadmap=content,
+        roadmap_context=True,
     )

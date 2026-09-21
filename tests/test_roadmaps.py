@@ -174,7 +174,7 @@ def test_official_preference_uncertainty_survives_model_omission_and_restart(
         )
         if expect_gap:
             assert run["status"] == route["status"] == "partial"
-            assert route["gaps"][0] in run["reply"]
+            assert "限制" in run["reply"] and len(run["reply"]) <= 800
             assert route["gaps"][0] in run["research"]["gaps"]
         else:
             assert route["gaps"] == []
