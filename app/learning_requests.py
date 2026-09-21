@@ -3,7 +3,7 @@
 import json
 import re
 import sqlite3
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -37,6 +37,10 @@ class Intake(BaseModel):
     )
     background: str | None = Field(max_length=400)
     time_budget: str | None = Field(max_length=400)
+    needed_fields: list[Literal["goal", "background", "time_budget"]] = Field(
+        max_length=3,
+        description="只列出会明显改变当前路线、必须核对的项；概览顺序无需时间预算时不列time_budget。",
+    )
 
 
 def read_all(db: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -71,6 +75,13 @@ def save(
             for m in r["messages"]
         )
     ]
+    if not selected_id and any(
+        r["roadmap_id"] and (target is None or r["id"] != target["id"])
+        for r in duplicates
+    ):
+        raise Clarification(
+            "此回复已用于已生成的路线；若要补充另一个目标，请在面板明确选择。"
+        )
     if not target and not selected_id and duplicates:
         if len(duplicates) != 1:
             raise Clarification("该回复对应多个目标，请在面板选择学习需求。")
@@ -110,12 +121,15 @@ def save(
         re.I,
     ):
         known["goal"] = None
+    needed = set(intake.needed_fields) | {"goal"}
     content = {
         "topic": intake.topic,
         "messages": messages,
         "known": known,
         "questions": [
-            question for key, question in QUESTIONS.items() if not known[key]
+            question
+            for key, question in QUESTIONS.items()
+            if key in needed and not known[key]
         ],
         "memories": loaded,
     }

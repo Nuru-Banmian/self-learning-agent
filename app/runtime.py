@@ -174,13 +174,10 @@ async def execute(
             ]
             if not context_requests and len(replay) == 1:
                 context_requests = replay
-            query = (
-                run["content"]
-                + " "
-                + " ".join(
-                    m["content"] for r in context_requests for m in r["messages"]
-                )
-            )
+            # Pending transcripts are routing candidates, not this turn's constraints.
+            query = run["content"]
+            if context_requests and not explicit_roadmap(run["content"]):
+                query += " 学习资料 " + " ".join(r["topic"] for r in context_requests)
             learning_context = bool(
                 context_requests or explicit_roadmap(run["content"])
             )
@@ -224,6 +221,8 @@ async def execute(
                             "goal必须null；"
                             "不能把‘学习 Redis’当成具体用途，不能从Python基础推测目标。"
                             "用户明确说不限时间或从零开始也是有效已知项，不反复追问。"
+                            "needed_fields只列会明显影响本次路线的关键信息，不是固定问卷；"
+                            "例如只要概览顺序、不要求按时间裁剪时，time_budget可为null且不追问。"
                             "旧需求的known和memories仅为历史展示，不得作为当前事实；"
                             "仅使用messages的用户原话和当前memories，绝不沿用已失效记忆。"
                             "用户想学习一个主题并已有背景目标时用plan_learning_roadmap实际搜索并保存路线，"
@@ -327,6 +326,24 @@ async def execute(
                     )
                 if tool == "plan_learning_roadmap":
                     intake = Intake.model_validate(arguments.pop("intake"))
+                    target = next(
+                        (r for r in context_requests if r["id"] == intake.request_id),
+                        None,
+                    )
+                    request_content = (
+                        "\n".join(
+                            [m["content"] for m in target["messages"]] if target else []
+                        )
+                        + "\n"
+                        + run["content"]
+                    )
+                    loaded = select_memories(
+                        store,
+                        memory_query(request_content, store.todos(), local),
+                        local,
+                        learning_context=True,
+                    )
+                    store.memory_record(run_id, loaded=loaded, usage=[])
                     saved = store.save_learning_request(
                         run,
                         intake,

@@ -20,6 +20,7 @@ REQUEST = "我想学习 Redis，有 Python 基础，目标是实现缓存，每�
 def complete_intake(content):
     return {
         "request_id": None,
+        "needed_fields": ["goal", "background", "time_budget"],
         "topic": "Redis",
         "goal": "实现缓存",
         "background": "Python 基础" if "Python 基础" in content else "我会 Python",

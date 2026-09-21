@@ -41,6 +41,7 @@ def intake_provider(requests):
                         "read_body": False,
                         "intake": {
                             "request_id": pending[0]["id"] if pending else None,
+                            "needed_fields": ["goal", "background", "time_budget"],
                             "topic": "Redis",
                             "goal": "实现缓存" if continued else None,
                             "background": "Python 基础",
@@ -417,3 +418,116 @@ def test_expired_time_memory_is_not_reused_from_saved_clarification(tmp_path):
         assert c.get("/api/learning-requests").json()[0]["questions"] == [
             "每次或每周可以投入多少时间？"
         ]
+
+
+def test_replayed_answer_does_not_attach_to_another_pending_goal(tmp_path):
+    with roadmap_client(tmp_path, [], intake_provider([])) as c:
+        submit(c, "我想学习 Redis，有 Python 基础，每次30分钟", "first")
+        submit(c, "目标是实现缓存", "completed")
+        submit(c, "我想学习 Redis，有 Python 基础，每次30分钟，先聊聊", "another")
+        before = c.get("/api/learning-requests").json()
+        assert len(before) == 2 and before[1]["roadmap_id"] is None
+        submit(c, "目标是实现缓存", "replayed")
+        assert c.get("/api/learning-requests").json() == before
+        assert len(c.get("/api/roadmaps").json()) == 1
+
+
+def test_pending_one_time_preference_does_not_affect_other_topics(tmp_path):
+    base = intake_provider([])
+
+    def provider(request):
+        body = json.loads(request.content)
+        if "response_format" in body:
+            source = json.loads(body["messages"][-1]["content"])
+            proposals = (
+                [candidate(source)] if source["content"] == "我喜欢官方资料" else []
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": json.dumps({"candidates": proposals})}}
+                    ]
+                },
+            )
+        text = body.get("messages", [{}])[-1].get("content", "")
+        if text in ("我喜欢官方资料", "SQLite 资料适合从哪里开始？"):
+            return httpx.Response(
+                200,
+                json=operation_response(
+                    "answer_question", {"reply": "先看资料", "memory_usage": []}
+                ),
+            )
+        response = base(request)
+        if (
+            "我想学习 SQLite" in text
+            and body.get("tools", [{}])[0].get("function", {}).get("name")
+            == "plan_learning_roadmap"
+        ):
+            payload = response.json()
+            call = payload["choices"][0]["message"]["tool_calls"][0]["function"]
+            args = json.loads(call["arguments"])
+            args["intake"].update(request_id=None, topic="SQLite")
+            args["query"] = "SQLite cache official documentation"
+            call["arguments"] = json.dumps(args)
+            return httpx.Response(200, json=payload)
+        return response
+
+    with roadmap_client(tmp_path, [], provider) as c:
+        submit(c, "我喜欢官方资料", "preference")
+        submit(c, "我想学习 Redis，有 Python 基础，每次30分钟，这次只看视频", "redis")
+        ordinary, _ = submit(c, "SQLite 资料适合从哪里开始？", "ordinary")
+        assert [m["content"] for m in ordinary["memory"]["loaded"]] == [
+            "我喜欢官方资料"
+        ]
+        fresh, _ = submit(
+            c, "我想学习 SQLite，有 Python 基础，每次30分钟，目标是实现缓存", "sqlite"
+        )
+        assert fresh["roadmap"], fresh
+        assert "官方资料" in fresh["research"]["task"]["query"]
+        # The temporary exception still applies when actually continuing Redis.
+        pending = c.get("/api/learning-requests").json()[0]
+        session = c.post("/api/sessions").json()["id"]
+        c.post(
+            f"/api/sessions/{session}/messages",
+            json={
+                "request_id": "redis-reply",
+                "content": "目标是实现缓存",
+                "action": {
+                    "tool": "continue_learning",
+                    "arguments": {"request_id": pending["id"]},
+                },
+            },
+        )
+        c.get("/api/runs/redis-reply/events")
+        continued = c.get("/api/runs/redis-reply").json()
+        assert continued["roadmap"]
+        assert not continued["memory"]["loaded"]
+
+
+def test_time_budget_not_required_when_it_does_not_affect_requested_overview(tmp_path):
+    base = intake_provider([])
+
+    def provider(request):
+        response = base(request)
+        payload = response.json()
+        for call in (
+            payload.get("choices", [{}])[0].get("message", {}).get("tool_calls", [])
+        ):
+            if call["function"]["name"] == "plan_learning_roadmap":
+                args = json.loads(call["function"]["arguments"])
+                args["intake"].update(
+                    time_budget=None, needed_fields=["goal", "background"]
+                )
+                call["function"]["arguments"] = json.dumps(args)
+        return httpx.Response(200, json=payload)
+
+    with roadmap_client(tmp_path, [], provider) as c:
+        run, _ = submit(
+            c, "我想学习 Redis，有 Python 基础，目标是实现缓存，只给学习顺序不排期"
+        )
+        assert run["roadmap"], run
+        request = c.get("/api/learning-requests").json()[0]
+        assert request["known"]["time_budget"] is None
+        assert request["questions"] == []
+        assert c.get("/api/todos").json() == []
