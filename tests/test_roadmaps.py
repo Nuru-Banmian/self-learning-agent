@@ -218,6 +218,8 @@ def test_negative_search_cannot_be_bypassed_with_ordinary_research(tmp_path, neg
         "目标是实现缓存，每次可投入30分钟",
         REQUEST + "，暂时不要加入待办",
         REQUEST + "，不要学习集群，只学基础缓存",
+        "请帮我制定 Redis 学习路线，我会 Python，目标是实现缓存，"
+        "每次可投入30分钟，不要学习集群，只学基础缓存",
         REQUEST + "，请说明每个节点的完成标准",
         "我想学习 Redis 的‘SET’命令，有 Python 基础，目标是实现缓存，每次可投入30分钟",
     ],

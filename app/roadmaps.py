@@ -77,14 +77,11 @@ def unquoted_request(content: str) -> str:
 
 def roadmap_blocked(content: str) -> bool:
     text = unquoted_request(content)
-    learning = re.search(
-        r"(?:^|[，,。；;])\s*(?:我)?(?:想|要|希望|打算)(?:学习|学会|学)", text
-    )
     return bool(
         search_blocked(content)
         or re.match(r"\s*(?:请帮我|请|帮我)?(?:解释|说明)", text)
         or (
-            not learning
+            not has_roadmap_request(text)
             and re.search(r"(?:不要|不用|不需要|不必|无需|别|不)(?:再)?学习", text)
         )
         or re.search(
@@ -109,13 +106,17 @@ def search_blocked(content: str) -> bool:
 
 
 def explicit_roadmap(content: str) -> bool:
-    if roadmap_blocked(content):
-        return False
+    return not roadmap_blocked(content) and has_roadmap_request(
+        unquoted_request(content)
+    )
+
+
+def has_roadmap_request(text: str) -> bool:
     return bool(
         re.search(
             r"(?:^|[，,。；;])\s*(?:(?:我)?(?:想|要|希望|打算)(?:学习|学会|学)|"
             r"(?:请|帮我|请帮我)?(?:规划|制定|生成).{0,30}学习路线)",
-            unquoted_request(content),
+            text,
         )
     )
 
