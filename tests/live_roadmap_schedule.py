@@ -1,6 +1,8 @@
 """Opt-in real model/IQS scheduling demo with isolated SQLite and saved evidence."""
 
+import argparse
 import json
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -16,9 +18,23 @@ from tests.test_roadmap_progress import target
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--saved-db",
+        type=Path,
+        help="Copy a saved roadmap database for an isolated real-model rerun",
+    )
+    args = parser.parse_args()
     directory = Path("output/issue23/live") / uuid4().hex[:10]
     directory.mkdir(parents=True)
     records = []
+    prefix = directory.name
+    if args.saved_db:
+        with (
+            sqlite3.connect(args.saved_db) as source,
+            sqlite3.connect(directory / "live.db") as destination,
+        ):
+            source.backup(destination)
 
     def record(step, **data):
         records.append({"step": step, **data})
@@ -31,7 +47,8 @@ def main():
     record(
         "environment",
         output=str(directory),
-        mode="real-model-and-IQS",
+        mode="real-model-with-saved-roadmap" if args.saved_db else "real-model-and-IQS",
+        saved_source=str(args.saved_db) if args.saved_db else None,
         mainland_egress="unverified-in-this-run",
     )
     if not (
@@ -41,22 +58,34 @@ def main():
         record("credentials", status="skipped")
         return
     with TestClient(create_app(settings)) as c:
-        generated, events = submit(
-            c,
-            "我想学习 Redis，有 Python 基础，目标是实现缓存，每次可投入30分钟。"
-            "请生成两个有资料来源的学习节点。",
-            "generation",
+        if args.saved_db:
+            routes = c.get("/api/roadmaps").json()
+            route = c.get(f"/api/roadmaps/{routes[0]['id']}").json()
+            session = c.post("/api/sessions").json()["id"]
+            record("saved-roadmap", status="loaded", roadmap=route)
+        else:
+            generated, events = submit(
+                c,
+                "我想学习 Redis，有 Python 基础，目标是实现缓存，每次可投入30分钟。"
+                "请生成两个有资料来源的学习节点。",
+                prefix + "-generation",
+            )
+            record(
+                "generation", status=generated["status"], run=generated, events=events
+            )
+            route, session = generated["roadmap"], generated["session_id"]
+            assert route.get("nodes"), (
+                "Provider did not produce a route; evidence retained"
+            )
+        accepted, _ = action(
+            c, session, prefix + "-accept", "accept_roadmap_node", target(route)
         )
-        record("generation", status=generated["status"], run=generated, events=events)
-        route, session = generated["roadmap"], generated["session_id"]
-        assert route["nodes"]
-        accepted, _ = action(c, session, "accept", "accept_roadmap_node", target(route))
         route = accepted["roadmap"]
         todos = c.get("/api/todos").json()
         preview, events = submit(
             c,
             f"请为路线「{route['title']}」排期，从明天开始，每天可学习1小时30分钟。",
-            "preview",
+            prefix + "-preview",
             session,
         )
         record(
@@ -88,7 +117,7 @@ def main():
         done, events = action(
             c,
             session,
-            "confirm",
+            prefix + "-confirm",
             "confirm_roadmap_schedule",
             {"roadmap_id": route["id"], "proposal_id": proposal["id"]},
         )
