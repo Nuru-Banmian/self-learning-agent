@@ -39,6 +39,14 @@ async def chat_schedule(
     transport: httpx.AsyncBaseTransport | None,
 ) -> ScheduleRequest | None:
     content = run["content"]
+    # Existing todo commands retain precedence even when their titles contain
+    # scheduling vocabulary. Their existing authorization still validates writes.
+    if re.search(
+        r"^\s*(?:请|麻烦)?(?:帮我|给我)?(?:记录|记下|记一条|添加待办|创建待办|完成|标记完成)|"
+        r"改到|改期到|日期改为|标题改为|改名为|标记为?已?完成",
+        unquoted_request(content),
+    ):
+        return None
     if explicit_roadmap(content):
         # A new learning request first creates an undated route. Scheduling is a
         # separate explicit request once the user can inspect its nodes.
@@ -68,7 +76,8 @@ async def chat_schedule(
                     "所有非空文本字段必须是本轮原文的连续片段，不能转述或推算日期。"
                     "roadmap_reference取明确的路线标题或完整ID；这条/该路线用空串。"
                     "start_text是起始日期词（如明天、2026-10-01），未说明为null。"
-                    "budget_text包含可用分钟/小时（如每天30分钟、半小时），availability_text取每天、工作日、周末或具体星期的原文。"
+                    "budget_text取完整时长原文（如30分钟、1小时30分钟、半小时），不得截断复合时长。"
+                    "availability_text取每天、工作日、周末或具体星期的原文。"
                     "deadline_text取截止日原文词，没有期限为null。"
                     "clear仅在明确清空或取消节点日期时为true。缺失字段为null，不从已有路线或记忆猜测。"
                     "不支持的条件、各日不同预算、未列明日期的每周次数、含糊日期、要求仅部分节点排期，写入unsupported以便澄清。"
@@ -106,7 +115,7 @@ async def chat_schedule(
         conditions.availability_text,
         conditions.deadline_text,
     ):
-        if value and value not in text:
+        if value and value not in content:
             raise Clarification(
                 "排期条件与本轮原文不一致，请重新指定日期和时间预算；未修改安排。"
             )
@@ -133,12 +142,23 @@ async def chat_schedule(
             roadmap_id=route["id"], expected_version=route["version"], clear=True
         )
     budget = conditions.budget_text or ""
-    match = re.search(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(分钟|小时)", budget)
+    duration = re.sub(
+        r"^(?:每天|每日|每个学习日)?(?:可(?:以)?|能|有|最多|只有)?"
+        r"(?:用|学习|投入)?\s*",
+        "",
+        budget,
+    ).strip()
+    match = re.fullmatch(
+        r"(?:(?P<hours>\d+(?:\.\d+)?)\s*(?:个)?小时"
+        r"(?:(?P<extra>\d+)\s*分钟|(?P<half>半))?|"
+        r"(?P<minutes>\d+)\s*分钟|(?P<half_hour>半小时))",
+        duration,
+    )
     minutes = (
-        float(match[1]) * (60 if match[2] == "小时" else 1)
+        float(match["hours"] or 0) * 60
+        + int(match["extra"] or match["minutes"] or 0)
+        + (30 if match["half"] or match["half_hour"] else 0)
         if match
-        else 30
-        if "半小时" in budget
         else 0
     )
     availability = conditions.availability_text or ""
@@ -151,8 +171,12 @@ async def chat_schedule(
     else:
         days = re.findall(r"(?:周|星期)([一二三四五六日天])", availability)
         weekdays = sorted({"一二三四五六日".index(d.replace("天", "日")) for d in days})
-        if re.search(r"到|至|[-~～]", availability):
-            weekdays = []  # Do not interpret a range as just its two endpoints.
+        if not re.fullmatch(
+            r"(?:每)?(?:周|星期)[一二三四五六日天]"
+            r"(?:[、,，和及 ]+(?:周|星期)[一二三四五六日天])*",
+            availability,
+        ):
+            weekdays = []  # Never silently ignore an unparsed day or range.
     if (
         not conditions.start_text
         or not minutes

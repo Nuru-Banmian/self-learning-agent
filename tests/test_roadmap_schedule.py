@@ -459,3 +459,125 @@ def test_learning_without_scheduling_still_generates_default_undated_route(tmp_p
         assert run["roadmap"]
         assert run["roadmap"]["schedule_proposals"] == []
         assert all(n["scheduled_date"] is None for n in run["roadmap"]["nodes"])
+
+
+@pytest.mark.parametrize(
+    "budget,reference", [("每天1小时30分钟", ""), ("每天30分钟", "Redis 缓存入门")]
+)
+def test_compound_budget_and_quoted_route_title(tmp_path, budget, reference):
+    import json
+
+    import httpx
+
+    from tests.test_maintenance import operation_response
+    from tests.test_roadmaps import roadmap_provider
+
+    base = roadmap_provider([])
+
+    def provider(request):
+        body = json.loads(request.content)
+        if (
+            body.get("tools", [{}])[0].get("function", {}).get("name")
+            == "schedule_conditions"
+        ):
+            return httpx.Response(
+                200,
+                json=operation_response(
+                    "schedule_conditions",
+                    {
+                        "roadmap_reference": reference,
+                        "start_text": "2026-10-01",
+                        "budget_text": budget,
+                        "availability_text": "每天",
+                        "deadline_text": None,
+                        "clear": False,
+                        "unsupported": [],
+                    },
+                ),
+            )
+        return base(request)
+
+    with roadmap_client(tmp_path, [], provider) as c:
+        generated, _ = submit(c, REQUEST)
+        ref = f"「{reference}」" if reference else ""
+        run, events = submit(
+            c,
+            f"请为路线{ref}排期，从2026-10-01开始，{budget}",
+            "preview",
+            generated["session_id"],
+        )
+        assert "event: roadmap_schedule_preview" in events, run
+        proposal = run["roadmap"]["schedule_proposals"][0]
+        assert proposal["basis"]["daily_minutes"] == (90 if "小时" in budget else 30)
+
+
+def test_ordinary_todo_rescheduling_with_scheduling_word_in_title(tmp_path):
+    from tests.test_chat import make_client, tool_response
+    from tests.test_maintenance import operation_response
+
+    with make_client(
+        tmp_path, tool_response([{"title": "整理项目排期", "date_text": None}])
+    ) as c:
+        created, _ = submit(c, "请记录整理项目排期")
+        todo_id = created["todo_ids"][0]
+    with make_client(
+        tmp_path,
+        operation_response(
+            "update_todo", {"todo_id": todo_id, "date_text": "2026-10-01"}
+        ),
+    ) as c:
+        session = c.post("/api/sessions").json()["id"]
+        changed, _ = submit(c, "把整理项目排期改到2026-10-01", "change", session)
+        assert changed["todo_ids"] == [todo_id], changed
+        assert c.get("/api/todos").json()[0]["scheduled_date"] == "2026-10-01"
+
+
+@pytest.mark.parametrize(
+    "budget,availability", [("每天30到60分钟", "每天"), ("30分钟", "周一三五")]
+)
+def test_ambiguous_budget_or_partial_weekdays_requires_clarification(
+    tmp_path, budget, availability
+):
+    import json
+
+    import httpx
+
+    from tests.test_maintenance import operation_response
+    from tests.test_roadmaps import roadmap_provider
+
+    base = roadmap_provider([])
+
+    def provider(request):
+        body = json.loads(request.content)
+        if (
+            body.get("tools", [{}])[0].get("function", {}).get("name")
+            == "schedule_conditions"
+        ):
+            return httpx.Response(
+                200,
+                json=operation_response(
+                    "schedule_conditions",
+                    {
+                        "roadmap_reference": "",
+                        "start_text": "2026-10-01",
+                        "budget_text": budget,
+                        "availability_text": availability,
+                        "deadline_text": None,
+                        "clear": False,
+                        "unsupported": [],
+                    },
+                ),
+            )
+        return base(request)
+
+    with roadmap_client(tmp_path, [], provider) as c:
+        generated, _ = submit(c, REQUEST)
+        route = generated["roadmap"]
+        run, events = submit(
+            c,
+            f"请为路线排期，从2026-10-01开始，{availability}，{budget}",
+            "ambiguous",
+            generated["session_id"],
+        )
+        assert "event: roadmap_schedule_preview" not in events
+        assert c.get(f"/api/roadmaps/{route['id']}").json() == route
