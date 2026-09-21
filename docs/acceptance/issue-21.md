@@ -35,7 +35,18 @@
 - 聊天批量测试先红：歧义指令落入模型失败；增加确定性路由后 33 passed。
 - 批量及恢复专项最终 10 passed，2 条既有依赖弃用警告。恢复初跑 1 failed / 3 passed：测试误将排队中断后的既有 `failed` 协议写成 `partial`；修正断言后通过。不是应用恢复失败。
 - 首次全量 244 passed，2 条既有警告，95.61 秒，`output/issue21/full-suite.txt`。
+- 修复后的最终全量 **247 passed，2 条既有警告，96.49 秒**，`output/issue21/final-full-suite.txt`。没有失败或跳过。
 - Standards 初审 0 项；Spec 初审发现 1 项 P2：宽泛聊天兜底误拦含“节点/路线”的普通建议标题。新增三条公开接口回归先 3 failed，再移除宽泛关键词拦截，仅由明确批量指令负责澄清；普通建议仍经过原有标题、模型目标与当前会话校验。补充新会话不能接受旧建议的断言及模糊路线指代澄清。
-- mypy、Ruff check/format、前端 TypeScript/Vite build、`git diff --check` 已通过。最终全量与复审结果在完成后回填。
+- mypy（17 个源文件）、Ruff check/format、前端 TypeScript/Vite build、`git diff --check` 已通过。浏览器最终控制台 0 errors / 0 warnings。
+
+## Standards
+
+独立只读审查 `043968d...9e25fff` 及修复增量 `9e25fff..705969d`：0 项可操作发现。对照项目规范、领域文档及 code-review smell baseline，未发现明确规范违例或值得修改的维护性问题。审查未重复执行全量。
+
+## Spec
+
+初审 1 项 P2（普通建议标题误拦），已在 `705969d` 修复。固定基线复审 **0 项剩余发现**，独立复跑 `test_roadmap_batch.py` 为 9 passed，2 条既有警告。确认原授权范围保持有效，未发现新增遗漏、错误实现或范围扩张。
+
+两轴最终发现数：Standards 0，Spec 0。全量结果见上文，不以审查结论替代运行结果。
 
 本轮按 implement 技能仅在当前 main 本地提交。已有未提交的 `CONTEXT.md`、`HANDOFF.md` 与 `docs/plans/` 保留，不纳入本次提交。
