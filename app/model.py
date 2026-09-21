@@ -13,7 +13,8 @@ CREATE_TOOL = {
     "type": "function",
     "function": {
         "name": "create_todos",
-        "description": "仅在用户明确安排或要求记录时，一次提交本句所有待办。",
+        "description": "仅在用户明确安排或要求记录普通待办时，一次提交本句所有事项。"
+        "直接记录明天学习某主题仍可带日期；已有路线节点加入不能改走此工具。",
         "parameters": {
             "type": "object",
             "additionalProperties": False,
@@ -66,8 +67,9 @@ def function_tool(
 TOOLS = [
     function_tool(
         "plan_learning_roadmap",
-        "用户表达学习意图或续答待续需求时，先核对背景目标时间，缺失则持久追问，充分才搜索。"
-        "不用于否定、引用、解释概念或直接记待办。",
+        "用户表达学习意图或续答待续需求时，只核对必要目标和相关基础，充分即可搜索。"
+        "永不要求或追问时间预算、频率、起止日期；主动给出的时间仅保留为背景。"
+        "不用于路线排期、否定、引用、解释概念或直接记待办。",
         {
             "intake": Intake.model_json_schema(),
             "query": {"type": "string", "maxLength": 1024},

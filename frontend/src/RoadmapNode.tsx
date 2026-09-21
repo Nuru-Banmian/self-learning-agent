@@ -35,9 +35,13 @@ export function RoadmapNode({ node, route, disabled, checked, onCheck, act }: {
         <p>完整目标：{node.goal}</p>
         <p>练习：{node.exercise}</p>
         <p>完成标准：{node.completion_criteria}</p>
-        <p>预计 {node.estimated_minutes} 分钟 · 当前节点安排：{node.scheduled_date || "未安排"}</p>
+        <p>预计 {node.estimated_minutes} 分钟</p>
         <p>候选待办：{node.todo_title}</p>
         {node.todo && <p>当前待办：{node.todo.title} · {node.todo.scheduled_date || "未安排"} · {node.todo.status === "completed" ? "已完成" : "待完成"}</p>}
+        {node.planned_date && <details>
+          <summary>历史计划日期（只读）</summary>
+          <p>{node.planned_date} · 仅保留历史记录，不用于新加入待办。</p>
+        </details>}
         {node.source_ids.map(id => {
           const source = route.sources.find(item => item.id === id);
           return source ? (

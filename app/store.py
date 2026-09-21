@@ -808,7 +808,7 @@ class Store:
                     },
                 )
                 reply = (
-                    "已加入所选节点，日期以路线当前安排为准。"
+                    "已加入所选节点，未安排日期。"
                     if created
                     else "该节点已完成，本次跳过，未新增待办。"
                     if next(
@@ -838,7 +838,7 @@ class Store:
                 existing = sum(r["status"] == "already_added" for r in results)
                 completed = sum(r["status"] == "completed" for r in results)
                 reply = (
-                    f"本次新增 {created_count} 项（日期以节点安排为准）；"
+                    f"本次新增 {created_count} 项（均未安排日期）；"
                     f"已加入 {existing} 项，"
                     f"跳过已完成 {completed} 项。未选节点保持原状。"
                     if results
@@ -1121,7 +1121,11 @@ class Store:
                             for s in research["sources"]
                         )
             before_memory_notice = reply
-            if status == "failed" and memory.get("saved_ids"):
+            if (
+                status == "failed"
+                and memory.get("saved_ids")
+                and error != "roadmap_scheduling_removed"
+            ):
                 status = "partial"
                 reply += "\n\n记忆已提交保存，但本轮其他处理未完成。"
             if (
@@ -1191,6 +1195,17 @@ class Store:
                 )
             ]
         for run_id in ids:
+            run = self.run(run_id)
+            if (
+                run
+                and not run["result_committed"]
+                and run["action"]
+                and run["action"]["tool"]
+                in ("preview_roadmap_schedule", "confirm_roadmap_schedule")
+            ):
+                removed = scheduling.SchedulingRemoved()
+                self.finish(run_id, "failed", str(removed), error=removed.code)
+                continue
             self.finish(
                 run_id, "failed", "处理已中断，未保存待办。", error="interrupted"
             )

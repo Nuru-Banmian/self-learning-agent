@@ -35,7 +35,7 @@ from app.roadmaps import (
     search_blocked,
 )
 from app.schedule_chat import chat_schedule
-from app.scheduling import ScheduleConfirmation, ScheduleRequest
+from app.scheduling import SchedulingRemoved
 from app.settings import Settings
 from app.store import Store
 from app.todos import (
@@ -111,7 +111,9 @@ async def execute(
                         run_id,
                         "completed",
                         "",
-                        revision_preview={"request": revision_content.model_dump()},
+                        revision_preview={
+                            "request": revision_content.model_dump(exclude_unset=True)
+                        },
                     )
                     return
                 if action["tool"] == "confirm_roadmap_revision":
@@ -125,29 +127,11 @@ async def execute(
                         revision_confirm=revision_confirmation.model_dump(),
                     )
                     return
-                if action["tool"] == "preview_roadmap_schedule":
-                    request = ScheduleRequest.model_validate(action["arguments"])
-                    store.finish(
-                        run_id,
-                        "completed",
-                        "",
-                        schedule_preview={
-                            "request": request.model_dump(),
-                            "timezone": settings.user_timezone,
-                        },
-                    )
-                    return
-                if action["tool"] == "confirm_roadmap_schedule":
-                    confirmation = ScheduleConfirmation.model_validate(
-                        action["arguments"]
-                    )
-                    store.finish(
-                        run_id,
-                        "completed",
-                        "",
-                        schedule_confirm=confirmation.model_dump(),
-                    )
-                    return
+                if action["tool"] in (
+                    "preview_roadmap_schedule",
+                    "confirm_roadmap_schedule",
+                ):
+                    raise SchedulingRemoved()
                 if action["tool"] == "complete_roadmap_node":
                     selection = NodeSelection.model_validate(action["arguments"])
                     store.finish(
@@ -209,21 +193,17 @@ async def execute(
                 return
             if finish_node_details(store, run):
                 return
-            revision_request = chat_request(store, run["content"])
-            if revision_request:
-                await generate(store, settings, run, revision_request, transport)
-                return
-            schedule_request = await chat_schedule(store, settings, run, transport)
-            if schedule_request:
+            if chat_schedule(store, run["content"]):
                 store.finish(
                     run_id,
                     "completed",
-                    "",
-                    schedule_preview={
-                        "request": schedule_request.model_dump(),
-                        "timezone": settings.user_timezone,
-                    },
+                    "学习路线按自己的节奏推进，不再提供路线排期。"
+                    "选择节点后加入无日期待办；需要日期时可单独编辑普通待办。",
                 )
+                return
+            revision_request = chat_request(store, run["content"])
+            if revision_request:
+                await generate(store, settings, run, revision_request, transport)
                 return
             mastery_target = chat_mastery(store, run["content"])
             if mastery_target:
@@ -313,7 +293,7 @@ async def execute(
                         "role": "system",
                         "content": (
                             "你是生活助理的主 Agent。"
-                            "短学习意图也用plan_learning_roadmap；补充学习背景、目标或时间时，"
+                            "短学习意图也用plan_learning_roadmap；补充学习背景或目标时，"
                             "结合learning_requests中的用户原话继续相应需求，无须重复主题。"
                             "无关聊天仍使用其他工具，不强行续接。存在多个可能目标须询问用户选择。"
                             "intake.request_id填写续接目标真实ID，新主题用null；"
@@ -323,9 +303,14 @@ async def execute(
                             "例如‘我想学习 Redis，每次30分钟’仅给出了主题和时间，"
                             "goal必须null；"
                             "不能把‘学习 Redis’当成具体用途，不能从Python基础推测目标。"
+                            "学习路线按用户自己的节奏推进，不追问时间预算、频率或起止日期。"
+                            "主动提供时间只保留原话，不恢复排期或时间追问；"
                             "用户明确说不限时间或从零开始也是有效已知项，不反复追问。"
                             "needed_fields只列会明显影响本次路线的关键信息，不是固定问卷；"
-                            "例如只要概览顺序、不要求按时间裁剪时，time_budget可为null且不追问。"
+                            "needed_fields只能要求必要的goal或background，time_budget可为null。"
+                            "选定待续需求可不补文字主动继续，使用该需求原话和当前生效记忆。"
+                            "任何路线排期、改期或清空日期请求均简短说明已停用，"
+                            "不能转为create_todos或update_todo绕过路线日期限制。"
                             "旧需求的known和memories仅为历史展示，不得作为当前事实；"
                             "仅使用messages的用户原话和当前memories，绝不沿用已失效记忆。"
                             "用户想学习一个主题并已有背景目标时用plan_learning_roadmap实际搜索并保存路线，"
@@ -592,6 +577,8 @@ async def execute(
                 f"• {i['title']} — {i['scheduled_date'] or '未安排'}" for i in prepared
             )
             store.finish(run_id, "completed", reply, prepared)
+    except SchedulingRemoved as exc:
+        store.finish(run_id, "failed", str(exc), error=exc.code)
     except Clarification as exc:
         store.finish(run_id, "completed", str(exc))
     except (ModelError, ValueError) as exc:

@@ -35,12 +35,12 @@ export function LearningRequestPanel({ requests, disabled, act }: {
         {request.memories.map((m) => <p key={m.id}>{m.content}</p>)}
         {request.messages.map((m) => <p key={m.id}>{m.content}</p>)}
       </details>
-      <label>补充 {request.topic}
+      <label>补充 {request.topic}{!request.questions.length && "（可选）"}
         <textarea value={replies[request.id] || ""} maxLength={8000}
           onChange={(event) => setReplies({ ...replies, [request.id]: event.target.value })} />
       </label>
-      <button disabled={disabled || !replies[request.id]?.trim()} onClick={() => {
-        act(replies[request.id].trim(), { tool: "continue_learning", arguments: { request_id: request.id } });
+      <button disabled={disabled || (request.questions.length > 0 && !replies[request.id]?.trim())} onClick={() => {
+        act(replies[request.id]?.trim() || "继续此学习需求", { tool: "continue_learning", arguments: { request_id: request.id } });
         setReplies({ ...replies, [request.id]: "" });
       }}>继续此学习需求</button>
     </article>)}

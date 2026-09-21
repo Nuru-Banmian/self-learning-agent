@@ -25,6 +25,7 @@ export type Node = {
   source_ids: string[];
   todo_id: string | null;
   scheduled_date: string | null;
+  planned_date: string | null;
   status?: string;
   completion: {
     completed_at: string;
@@ -53,7 +54,7 @@ export type Roadmap = RoadmapSummary & {
   }[];
 };
 export type RoadmapAction = {
-  tool: "revise_roadmap" | "preview_roadmap_revision" | "confirm_roadmap_revision" | "accept_roadmap_nodes" | "complete_roadmap_node" | "preview_roadmap_schedule" | "confirm_roadmap_schedule";
+  tool: "revise_roadmap" | "preview_roadmap_revision" | "confirm_roadmap_revision" | "accept_roadmap_nodes" | "complete_roadmap_node";
   arguments: Record<string, unknown>;
 };
 
@@ -125,7 +126,7 @@ export function RoadmapPanel({
     >
       <h2>学习路线</h2>
       <p className="list-note">
-        跨会话保存 · 可全选或选择部分节点加入待办 · 默认未安排日期
+        跨会话保存 · 可全选或选择部分节点加入待办 · 按自己的节奏完成
       </p>
       {!roadmaps.length && (
         <p>说出想学的主题、基础与目标，生成有资料来源的路线。</p>
@@ -198,11 +199,11 @@ export function RoadmapPanel({
             aria-label="确认加入清单"
             aria-live="polite"
           >
-            <p>本次待新增 {pending.length} 项 · 沿用已确认的节点日期</p>
+            <p>本次待新增 {pending.length} 项 · 加入后不安排日期，按自己的节奏完成</p>
             {pending.length ? (
               <ul>
                 {pending.map((node) => (
-                  <li key={node.id}>{node.todo_title} · {node.scheduled_date || "未安排"}</li>
+                  <li key={node.id}>{node.todo_title}</li>
                 ))}
               </ul>
             ) : (
@@ -231,13 +232,13 @@ export function RoadmapPanel({
             </button>
           </section>
           <details className="roadmap-tools" key={`${route.id}-${route.version}-revision`}>
-            <summary>调整学习路线{route.revision_proposals.some(proposal => proposal.status === "pending") ? " · 有待确认方案" : ""}</summary>
+            <summary>调整学习路线{route.revision_proposals.some(proposal => proposal.status === "pending" && !proposal.date_changes_blocked) ? " · 有待确认方案" : ""}</summary>
             <RevisionPanel route={route} disabled={disabled} act={act} />
           </details>
-          <details className="roadmap-tools" key={`${route.id}-schedule`}>
-            <summary>按需排期{route.schedule_proposals.some(proposal => proposal.status === "pending") ? " · 有待确认方案" : ""}</summary>
-            <SchedulePanel route={route} disabled={disabled} act={act} />
-          </details>
+          {route.schedule_proposals.length > 0 && <details className="roadmap-history" key={`${route.id}-schedule`}>
+            <summary>历史排期记录（只读）</summary>
+            <SchedulePanel proposals={route.schedule_proposals} />
+          </details>}
           {route.history_nodes.length > 0 && (
             <details className="roadmap-history" key={`${route.id}-history`}>
               <summary>历史节点与记录 · {route.history_nodes.length} 项</summary>

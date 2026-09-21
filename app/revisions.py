@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app import roadmap_store
 from app.roadmap_presentation import render_nodes, validate_summary
+from app.scheduling import SchedulingRemoved
 from app.todos import Clarification
 
 SCHEMA = """
@@ -32,6 +33,57 @@ def snapshot(route: dict[str, Any]) -> dict[str, Any]:
     return {k: route[k] for k in ("version", "nodes", "history_nodes")}
 
 
+def same_snapshot(current: dict[str, Any], previous: dict[str, Any]) -> bool:
+    # Older pending proposals predate the separate read-only planned_date field.
+    def comparable(value: dict[str, Any]) -> dict[str, Any]:
+        return value | {
+            key: [
+                {k: v for k, v in node.items() if k != "planned_date"}
+                for node in value[key]
+            ]
+            for key in ("nodes", "history_nodes")
+        }
+
+    return comparable(current) == comparable(previous)
+
+
+def unchanged_date(
+    value: str | None, before: dict[str, Any] | None, *, explicit: bool = False
+) -> bool:
+    if before is None:
+        return value is None
+    if explicit and value is None:
+        return before["scheduled_date"] is None and before.get("planned_date") is None
+    # Old callers echo the displayed actual todo date; new callers may echo the
+    # independent historical plan. Neither compatibility spelling writes a date.
+    return value == before["scheduled_date"] or (
+        "planned_date" in before and value == before["planned_date"]
+    )
+
+
+def date_changes_blocked(proposal: dict[str, Any]) -> bool:
+    if proposal.get("status") == "applied":
+        return False
+    old = {node["id"]: node for node in proposal["snapshot"]["nodes"]}
+    return any(
+        not unchanged_date(node.get("scheduled_date"), old.get(node["id"]))
+        for node in proposal["nodes"]
+    ) or any(
+        entry["todo_before"]
+        and entry["todo_after"]
+        and entry["todo_before"]["scheduled_date"]
+        != entry["todo_after"]["scheduled_date"]
+        for entry in proposal["entries"]
+    )
+
+
+def reject_date_changes() -> None:
+    raise SchedulingRemoved(
+        "路线排期已取消，此调整包含日期变化，整份方案未应用。"
+        "请重新生成不含日期变化的内容调整方案；单条待办可手动编辑日期。"
+    )
+
+
 def preview(
     db: sqlite3.Connection, run: sqlite3.Row, args: dict[str, Any]
 ) -> tuple[dict[str, Any], str]:
@@ -42,7 +94,7 @@ def preview(
     route = roadmap_store.read(db, request.roadmap_id)
     if not route or route["version"] != request.expected_version:
         raise Clarification("路线已变化，请刷新后重新生成调整方案；未修改。")
-    if args.get("snapshot") and args["snapshot"] != snapshot(route):
+    if args.get("snapshot") and not same_snapshot(args["snapshot"], snapshot(route)):
         raise Clarification("生成方案期间路线已变化，请重新生成；未修改。")
     sources = route["sources"] + args.get("sources", [])
     old = {n["id"]: n for n in route["nodes"]}
@@ -58,6 +110,13 @@ def preview(
         if not set(node["source_ids"]) <= {s["id"] for s in sources}:
             raise Clarification("调整引用了未取得的资料，未保存方案。")
         before = old.get(identity)
+        if "scheduled_date" in requested.model_fields_set and not unchanged_date(
+            requested.scheduled_date, before, explicit=True
+        ):
+            reject_date_changes()
+        # Dates remain stored independently. The proposal merely describes the
+        # preserved public date, so completed-node checks retain their meaning.
+        node["scheduled_date"] = before["scheduled_date"] if before else None
         for display, full in (
             ("display_title", "todo_title"),
             ("display_goal", "goal"),
@@ -79,7 +138,6 @@ def preview(
                 # Preserve independent todo edits unless this field is changed.
                 if before["todo_title"] != after["todo_title"]:
                     todo_after["title"] = after["todo_title"]
-                todo_after["scheduled_date"] = after["scheduled_date"]
             entries.append(
                 {
                     "kind": "modify" if before else "add",
@@ -175,9 +233,13 @@ def confirm(
     proposal = json.loads(row["content"]) | {"status": row["status"]}
     if row["status"] == "applied":
         return proposal, "此调整方案已应用，本次未重复修改。"
+    if date_changes_blocked(proposal):
+        reject_date_changes()
     route = roadmap_store.read(db, target.roadmap_id)
     assert route is not None
-    if row["status"] == "stale" or snapshot(route) != proposal["snapshot"]:
+    if row["status"] == "stale" or not same_snapshot(
+        snapshot(route), proposal["snapshot"]
+    ):
         db.execute(
             "UPDATE revision_proposals SET status='stale' WHERE id=?",
             (target.proposal_id,),
@@ -224,11 +286,6 @@ def confirm(
                     json.dumps(content, ensure_ascii=False),
                 ),
             )
-        db.execute(
-            "INSERT INTO roadmap_dates VALUES(?,?) ON CONFLICT(node_id) "
-            "DO UPDATE SET scheduled_date=excluded.scheduled_date",
-            (node["id"], node["scheduled_date"]),
-        )
     for entry in proposal["entries"]:
         if entry["kind"] == "archive":
             db.execute(
@@ -237,8 +294,8 @@ def confirm(
         if entry["todo_before"] != entry["todo_after"]:
             todo = entry["todo_after"]
             db.execute(
-                "UPDATE todos SET title=?,scheduled_date=?,updated_at=? WHERE id=?",
-                (todo["title"], todo["scheduled_date"], run["received_at"], todo["id"]),
+                "UPDATE todos SET title=?,updated_at=? WHERE id=?",
+                (todo["title"], run["received_at"], todo["id"]),
             )
     content = json.loads(
         db.execute(
