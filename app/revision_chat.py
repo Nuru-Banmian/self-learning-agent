@@ -54,6 +54,12 @@ class SearchPlan(BaseModel):
 
 def chat_request(store: Store, content: str) -> RevisionRequest | None:
     text = unquoted_request(content)
+    if re.search(
+        r"^\s*(?:请|麻烦)?(?:帮我|给我)?(?:记录|记下|记一条|添加待办|创建待办|完成|标记完成)|"
+        r"改到|改期到|日期改为|标题改为|改名为|标记为?已?完成",
+        text,
+    ):
+        return None
     intent = (
         r"调整.*路线|修改.*路线|路线.*(?:调整|修改)|改简单|改容易|太难了|"
         r"改变.*学习目标|学习目标.*改"
@@ -61,7 +67,9 @@ def chat_request(store: Store, content: str) -> RevisionRequest | None:
     if not re.search(intent, text):
         return None
     if re.search(
-        r"(?:不要|不用|不需要|别).{0,5}(?:调整|修改|改变)|解释|翻译|比如|如果|假如|要不要|是否",
+        r"(?:不要|不用|不需要|别)(?:再|帮我)?(?:调整|修改|改变)"
+        r"(?:(?:这条|该|当前|学习)?路线|学习目标|[，,。！!]|$)|"
+        r"解释|翻译|比如|如果|假如|要不要|是否",
         text,
     ):
         raise Clarification("本轮没有明确调整请求，当前路线保持原状。")
@@ -74,7 +82,11 @@ def chat_request(store: Store, content: str) -> RevisionRequest | None:
         roadmap_id=matched[0]["id"],
         expected_version=matched[0]["version"],
         instruction=content,
-        unjoined_only=bool(re.search(r"只.*(?:未加入|未关联)", text)),
+        unjoined_only=bool(
+            re.search(
+                r"只.*(?:未加入|未关联)|(?:不要|不用|别)修改.*(?:已加入|已关联)", text
+            )
+        ),
     )
 
 
@@ -147,6 +159,15 @@ async def generate(
     )
     if plan.unsupported:
         raise Clarification("请澄清调整要求：" + "；".join(plan.unsupported))
+    if (
+        not plan.query
+        and re.search(r"搜索|查找", unquoted_request(request.instruction))
+        and not search_blocked(request.instruction)
+    ):
+        query = route["title"] + " " + request.instruction
+        if len(query) > 1024:
+            raise Clarification("搜索要求过长，请简化本轮调整要求；未保存方案。")
+        plan.query = query
     sources: list[dict[str, Any]] = []
     gaps: list[str] = []
     if plan.query:
@@ -170,6 +191,11 @@ async def generate(
         for source in sources:
             source["id"] = f"R{run['id']}-{source['id']}"
         gaps = record["gaps"]
+        if sources and "官方" in request.instruction:
+            gaps.append(
+                "本轮新增来源的官方身份尚未核实，不能保证满足官方资料要求；请核对来源。"
+            )
+            record["status"] = "partial"
         store.research_record(run["id"], record)
         if not sources:
             store.finish(

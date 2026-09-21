@@ -61,7 +61,17 @@ def test_unjoined_revision_preview_confirm_and_restart(tmp_path):
         assert repeated["roadmap"] == done["roadmap"]
 
 
-def test_natural_adjustment_searches_and_only_saves_reviewable_proposal(tmp_path):
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        "这条路线太难了，改简单一点，搜索新的入门资料",
+        "请调整这条路线，把第一个练习改简单一点，不要修改日期，搜索新的入门资料",
+    ],
+)
+@pytest.mark.parametrize("query", ["Redis beginner SET GET official", None])
+def test_natural_adjustment_searches_and_only_saves_reviewable_proposal(
+    tmp_path, query, instruction
+):
     import json
 
     import httpx
@@ -80,7 +90,7 @@ def test_natural_adjustment_searches_and_only_saves_reviewable_proposal(tmp_path
                 200,
                 json=operation_response(
                     name,
-                    {"query": "Redis beginner SET GET official", "unsupported": []},
+                    {"query": query, "unsupported": []},
                 ),
             )
         if name == "revision_answer":
@@ -96,7 +106,7 @@ def test_natural_adjustment_searches_and_only_saves_reviewable_proposal(tmp_path
         before = len([url for url, _ in requests if "/search/unified" in url])
         preview, events = submit(
             c,
-            "这条路线太难了，改简单一点，搜索新的入门资料",
+            instruction,
             "revision",
             generated["session_id"],
         )
@@ -562,3 +572,80 @@ def test_parallel_confirmation_applies_only_one_competing_revision(tmp_path):
         current = c.get(f"/api/roadmaps/{route['id']}").json()
         assert current["version"] == route["version"] + 1
         assert c.get("/api/todos").json() == []
+
+
+def test_todo_title_with_revision_words_keeps_normal_todo_authorization(tmp_path):
+    import json
+
+    import httpx
+
+    from tests.test_maintenance import operation_response
+    from tests.test_roadmaps import roadmap_provider
+
+    base = roadmap_provider([])
+
+    def provider(request):
+        body = json.loads(request.content)
+        if body.get("tools") and "请记录" in body["messages"][-1]["content"]:
+            return httpx.Response(
+                200,
+                json=operation_response(
+                    "create_todos",
+                    {"items": [{"title": "调整路线图", "date_text": "明天"}]},
+                ),
+            )
+        return base(request)
+
+    with roadmap_client(tmp_path, [], provider) as c:
+        generated, _ = submit(c, REQUEST)
+        route = generated["roadmap"]
+        saved, _ = submit(c, "请记录明天调整路线图", "todo", generated["session_id"])
+        assert len(c.get("/api/todos").json()) == 1, saved
+        assert c.get("/api/todos").json()[0]["title"] == "调整路线图"
+        assert c.get(f"/api/roadmaps/{route['id']}").json() == route
+
+
+def test_refused_sync_can_be_replaced_by_separately_confirmed_unjoined_diff(tmp_path):
+    from tests.test_roadmap_progress import target
+
+    with roadmap_client(tmp_path, []) as c:
+        generated, _ = submit(c, REQUEST)
+        route, session = generated["roadmap"], generated["session_id"]
+        accepted, _ = action(c, session, "accept", "accept_roadmap_node", target(route))
+        route = accepted["roadmap"]
+        original, _ = action(
+            c,
+            session,
+            "large-preview",
+            "preview_roadmap_revision",
+            revision_args(route),
+        )
+        pending = original["roadmap"]["revision_proposals"][0]
+        action(
+            c,
+            session,
+            "refuse",
+            "confirm_roadmap_revision",
+            {"roadmap_id": route["id"], "proposal_id": pending["id"]},
+        )
+        small = revision_args(route)
+        small["nodes"][0]["exercise"] = route["nodes"][0]["exercise"]
+        small["nodes"][0]["todo_title"] = route["nodes"][0]["todo_title"]
+        small["nodes"][1]["estimated_minutes"] = 20
+        result, _ = action(
+            c, session, "small-preview", "preview_roadmap_revision", small
+        )
+        proposal = result["roadmap"]["revision_proposals"][0]
+        assert proposal["id"] != pending["id"]
+        assert proposal["sync_todo_ids"] == []
+        assert len(proposal["entries"]) == 1
+        done, _ = action(
+            c,
+            session,
+            "confirm-small",
+            "confirm_roadmap_revision",
+            {"roadmap_id": route["id"], "proposal_id": proposal["id"]},
+        )
+        assert done["roadmap"]["nodes"][0] == route["nodes"][0]
+        assert done["roadmap"]["nodes"][1]["estimated_minutes"] == 20
+        assert done["roadmap"]["revision_proposals"][1]["status"] == "pending"
