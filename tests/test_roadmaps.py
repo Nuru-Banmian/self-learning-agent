@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -14,6 +15,16 @@ from tests.test_chat import submit
 from tests.test_maintenance import action, operation_response
 
 REQUEST = "我想学习 Redis，有 Python 基础，目标是实现缓存，每次可投入30分钟"
+
+
+def complete_intake(content):
+    return {
+        "request_id": None,
+        "topic": "Redis",
+        "goal": "实现缓存",
+        "background": "Python 基础" if "Python 基础" in content else "我会 Python",
+        "time_budget": re.search(r"每次[^，。]*?30分钟", content)[0],
+    }
 
 
 def roadmap_answer():
@@ -72,6 +83,7 @@ def roadmap_provider(requests):
             result = operation_response(
                 "plan_learning_roadmap",
                 {
+                    "intake": complete_intake(body["messages"][-1]["content"]),
                     "query": "Redis strings expiry official documentation",
                     "todo_ids": [],
                     "memory_ids": [],
@@ -281,6 +293,7 @@ def test_failed_research_keeps_actual_material_without_fake_roadmap(
                 json=operation_response(
                     "plan_learning_roadmap",
                     {
+                        "intake": complete_intake(REQUEST),
                         "query": "Redis official strings",
                         "todo_ids": [],
                         "memory_ids": [],
@@ -424,6 +437,7 @@ def test_empty_targeted_search_can_use_bounded_broader_search_with_gap(tmp_path)
                 json=operation_response(
                     "plan_learning_roadmap",
                     {
+                        "intake": complete_intake(REQUEST),
                         "query": "Redis TTL site:redis.io",
                         "todo_ids": [],
                         "memory_ids": [],

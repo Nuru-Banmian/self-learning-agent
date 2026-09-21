@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from pydantic import ValidationError
 
+from app.learning_requests import Intake
 from app.memory import Answer, answer_text, learn, select_memories
 from app.memory_changes import chat_memory_change, prepare_memory_change
 from app.memory_policy import mixed_todo_content
@@ -76,7 +77,15 @@ async def execute(
             local = datetime.fromisoformat(run["received_at"]).astimezone(
                 ZoneInfo(settings.user_timezone)
             )
-            if run["action"]:
+            selected_id = None
+            if run["action"] and run["action"]["tool"] == "continue_learning":
+                args = run["action"]["arguments"]
+                if set(args) != {"request_id"} or not isinstance(
+                    args["request_id"], str
+                ):
+                    raise Clarification("请选择要继续的学习需求。")
+                selected_id = args["request_id"]
+            if run["action"] and not selected_id:
                 action = run["action"]
                 if action["tool"] == "accept_roadmap_node":
                     selection = NodeSelection.model_validate(action["arguments"])
@@ -144,8 +153,42 @@ async def execute(
                 await learn(store, settings, run, local, transport)
             except (ModelError, ValueError, sqlite3.Error, KeyError, TypeError):
                 store.memory_record(run_id, learning="failed", error="memory_learning")
+            learning_requests = store.learning_requests()
+            if selected_id and not any(
+                r["id"] == selected_id for r in learning_requests
+            ):
+                raise Clarification("待续学习需求不存在，请重新选择。")
+            context_requests = [
+                r
+                for r in learning_requests
+                if r["id"] == selected_id or (not selected_id and not r["roadmap_id"])
+            ]
+            # Retry/replay retains its target even after successful generation.
+            replay = [
+                r
+                for r in learning_requests
+                if any(
+                    m["id"] == run["message_id"] or m["content"] == run["content"]
+                    for m in r["messages"]
+                )
+            ]
+            if not context_requests and len(replay) == 1:
+                context_requests = replay
+            query = (
+                run["content"]
+                + " "
+                + " ".join(
+                    m["content"] for r in context_requests for m in r["messages"]
+                )
+            )
+            learning_context = bool(
+                context_requests or explicit_roadmap(run["content"])
+            )
             loaded = select_memories(
-                store, memory_query(run["content"], store.todos(), local), local
+                store,
+                memory_query(query, store.todos(), local),
+                local,
+                learning_context=learning_context,
             )
             revision = store.memory_revision()
             store.memory_record(run_id, loaded=loaded, usage=[], effect_verified=False)
@@ -154,7 +197,7 @@ async def execute(
                 "create_todos"
                 if mixed_todo_content(run["content"])
                 else "plan_learning_roadmap"
-                if explicit_roadmap(run["content"])
+                if explicit_roadmap(run["content"]) or selected_id
                 else "prepare_outing"
                 if explicit_weather(run["content"])
                 else "research_learning"
@@ -170,6 +213,19 @@ async def execute(
                         "role": "system",
                         "content": (
                             "你是生活助理的主 Agent。"
+                            "短学习意图也用plan_learning_roadmap；补充学习背景、目标或时间时，"
+                            "结合learning_requests中的用户原话继续相应需求，无须重复主题。"
+                            "无关聊天仍使用其他工具，不强行续接。存在多个可能目标须询问用户选择。"
+                            "intake.request_id填写续接目标真实ID，新主题用null；"
+                            "topic、goal、background、time_budget只能摘录用户原话或本轮生效记忆的连续片段。"
+                            "当前补充或纠正优先于旧信息；先用相关记忆补足已知项，缺失填null，不猜测。"
+                            "goal是希望达成的具体能力，background是相关基础，time_budget是可用时间。"
+                            "例如‘我想学习 Redis，每次30分钟’仅给出了主题和时间，"
+                            "goal必须null；"
+                            "不能把‘学习 Redis’当成具体用途，不能从Python基础推测目标。"
+                            "用户明确说不限时间或从零开始也是有效已知项，不反复追问。"
+                            "旧需求的known和memories仅为历史展示，不得作为当前事实；"
+                            "仅使用messages的用户原话和当前memories，绝不沿用已失效记忆。"
                             "用户想学习一个主题并已有背景目标时用plan_learning_roadmap实际搜索并保存路线，"
                             "无需用户说搜索；不用于解释概念、引用、否定或直接记录待办。"
                             "路线query应为精简的主题与核心API检索词，不要把整段用户需求当搜索词。"
@@ -212,7 +268,25 @@ async def execute(
                     },
                     {
                         "role": "system",
-                        "content": json.dumps({"memories": loaded}, ensure_ascii=False),
+                        "content": json.dumps(
+                            {
+                                "memories": loaded,
+                                "learning_requests": [
+                                    {
+                                        k: r[k]
+                                        for k in (
+                                            "id",
+                                            "topic",
+                                            "messages",
+                                            "questions",
+                                        )
+                                    }
+                                    for r in context_requests
+                                ],
+                                "selected_learning_request_id": selected_id,
+                            },
+                            ensure_ascii=False,
+                        ),
                     },
                     {"role": "user", "content": run["content"]},
                 ],
@@ -251,6 +325,41 @@ async def execute(
                     raise Clarification(
                         "本轮未生成路线。需要学习路线时请明确主题和学习目标。"
                     )
+                if tool == "plan_learning_roadmap":
+                    intake = Intake.model_validate(arguments.pop("intake"))
+                    saved = store.save_learning_request(
+                        run,
+                        intake,
+                        context_requests,
+                        loaded,
+                        revision,
+                        new_intent=explicit_roadmap(run["content"]),
+                        selected_id=selected_id,
+                    )
+                    usage = [
+                        {
+                            "memory_id": m["id"],
+                            "reason": "用于本轮学习需求核对：" + str(value),
+                        }
+                        for m in loaded
+                        for value in saved["known"].values()
+                        if value and value in m["content"]
+                    ]
+                    store.memory_record(run_id, usage=usage)
+                    if saved["questions"]:
+                        store.finish(
+                            run_id,
+                            "completed",
+                            "学习需求已保存："
+                            + saved["topic"]
+                            + "\n"
+                            + "\n".join(saved["questions"]),
+                        )
+                        return
+                    run = run | {
+                        "content": "\n".join(m["content"] for m in saved["messages"]),
+                        "learning_constraints": saved["known"],
+                    }
                 await research_learning(
                     store,
                     settings,

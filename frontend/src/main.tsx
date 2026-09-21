@@ -1,3 +1,4 @@
+import { LearningRequestPanel, type LearningRequest } from "./LearningRequestPanel";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
@@ -147,6 +148,7 @@ type Action = {
     | "complete_todo"
     | "accept_suggestion"
     | "accept_roadmap_node"
+    | "continue_learning"
     | "update_memory"
     | "delete_memory";
   arguments: Record<string, unknown>;
@@ -516,6 +518,7 @@ function App() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [learningRequests, setLearningRequests] = useState<LearningRequest[]>([]);
   const [roadmaps, setRoadmaps] = useState<RoadmapSummary[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -539,7 +542,7 @@ function App() {
     const isCurrent = () =>
       currentSession.current === id && refreshVersion.current === version;
     try {
-      const [data, summary, ideas, savedMemories, savedRoadmaps] = await Promise.all([
+      const [data, summary, ideas, savedMemories, savedRoadmaps, savedRequests] = await Promise.all([
         api<{
           messages: Message[];
           latest_run_id: string | null;
@@ -549,6 +552,7 @@ function App() {
         api<Suggestion[]>(`/sessions/${id}/suggestions`),
         api<Memory[]>("/memories"),
         api<RoadmapSummary[]>("/roadmaps"),
+        api<LearningRequest[]>("/learning-requests"),
       ]);
       const history = await Promise.all(
         data.run_ids.map((runId) => api<Run>(`/runs/${runId}`)),
@@ -560,6 +564,7 @@ function App() {
       setSuggestions(ideas);
       setMemories(savedMemories);
       setRoadmaps(savedRoadmaps);
+      setLearningRequests(savedRequests);
       // A run may finish after the session snapshot; include its committed reply.
       const byId = new Map(
         data.messages.map((message) => [message.id, message]),
@@ -973,6 +978,7 @@ function App() {
             ))}
           </section>
           <ResearchPanel research={research} />
+          <LearningRequestPanel requests={learningRequests} disabled={!session || busy || !!pending} act={act} />
           <RoadmapPanel roadmaps={roadmaps} disabled={!session || busy || !!pending} act={act} />
           <WeatherPanel weather={weather} />
           <section className="suggestions" aria-label="行动建议">

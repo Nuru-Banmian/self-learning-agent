@@ -61,7 +61,9 @@ def active(memory: dict[str, Any], now: datetime, todos: list[dict[str, Any]]) -
     )
 
 
-def select_memories(store: Store, query: str, now: datetime) -> list[dict[str, Any]]:
+def select_memories(
+    store: Store, query: str, now: datetime, *, learning_context: bool = False
+) -> list[dict[str, Any]]:
     selected: list[dict[str, Any]] = []
     todos = store.todos()
     memories = store.memories()
@@ -96,7 +98,9 @@ def select_memories(store: Store, query: str, now: datetime) -> list[dict[str, A
             for t in todos
         ):
             continue
-        relevant = topic_matches(memory["topic"], query)
+        relevant = topic_matches(memory["topic"], query) or (
+            learning_context and memory["category"] in ("background", "condition")
+        )
         if not relevant and not (
             memory["category"] == "condition"
             and any(w in query for w in ("今天", "计划", "安排"))

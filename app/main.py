@@ -174,6 +174,10 @@ def create_app(
     def roadmaps() -> list[dict[str, Any]]:
         return store.roadmaps()
 
+    @app.get("/api/learning-requests")
+    def learning_requests() -> list[dict[str, Any]]:
+        return store.learning_requests()
+
     @app.get("/api/roadmaps/{roadmap_id}")
     def roadmap(roadmap_id: str) -> dict[str, Any]:
         result = store.roadmap(roadmap_id)

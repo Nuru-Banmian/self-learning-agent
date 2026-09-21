@@ -201,6 +201,9 @@ def category_of(clause: str) -> str | None:
         clause,
     ):
         return "preference"
-    if re.match(r"我(?:是|住在|居住在|正在学习|在学|目前在学|从事|工作是)", clause):
+    if re.match(
+        r"我(?:是|住在|居住在|正在学习|在学|目前在学|从事|工作是|有.{1,40}基础)",
+        clause,
+    ):
         return "background"
     return None
