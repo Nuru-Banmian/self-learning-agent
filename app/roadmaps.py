@@ -82,7 +82,8 @@ def chat_selection(store: Store, content: str) -> NodeSelection | None:
 
 def chat_batch_selection(store: Store, content: str) -> NodesSelection | None:
     match = re.fullmatch(
-        r"(?:请)?(?:把|将)\s*(?:学习)?路线\s*(.*?)\s*全部(?:加入待办|加进去)[。！!]?",
+        r"(?:请)?(?:把|将)\s*(?:这条|该)?(?:学习)?路线\s*(.*?)\s*"
+        r"全部(?:加入待办|加进去)[。！!]?",
         content.strip(),
     )
     if match:
@@ -97,14 +98,9 @@ def chat_batch_selection(store: Store, content: str) -> NodesSelection | None:
                 node_ids=[n["id"] for n in route["nodes"]],
                 expected_version=route["version"],
             )
-    # Route references must never fall through to ordinary suggestion authorization.
-    if match or (
-        not has_roadmap_request(unquoted_request(content))
-        and re.search(
-            r"(?:路线|节点).*?(?:加入待办|加进去)|(?:加入待办|加进去).*?(?:路线|节点)",
-            content,
-        )
-    ):
+    # Only the explicit batch command owns this clarification; ordinary titles
+    # containing "route" or "node" keep the existing suggestion authorization.
+    if match:
         raise Clarification(
             "路线或节点目标不明确，未新增。请在路线面板全选或勾选部分节点后确认；"
             "也可说‘把路线 完整标识 全部加入待办’。"

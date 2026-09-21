@@ -79,11 +79,36 @@ def test_chat_batch_requires_unambiguous_route_and_resolves_stable_identity(tmp_
         route = first["roadmap"]
         ambiguous, _ = submit(c, "把路线 Redis 缓存入门 全部加入待办", "ambiguous")
         assert "不明确" in ambiguous["reply"]
+        vague, _ = submit(c, "把这条路线全部加入待办", "vague")
+        assert "不明确" in vague["reply"]
         assert c.get("/api/todos").json() == []
         accepted, _ = submit(c, f"把路线 {route['id']} 全部加入待办", "accept")
         assert "本次新增 2" in accepted["reply"]
         assert accepted["model_calls"] == 0
         assert len(c.get("/api/todos").json()) == 2
+
+
+@pytest.mark.parametrize("title", ["检查集群节点", "规划骑行路线", "路线复习"])
+def test_ordinary_suggestion_titles_do_not_become_roadmap_targets(tmp_path, title):
+    payload = operation_response("plan_day", {"suggestions": [title]})
+
+    def provider(request):
+        return httpx.Response(200, json=payload)
+
+    with roadmap_client(tmp_path, [], provider) as c:
+        plan, _ = submit(c, "今天我该干什么")
+        session = plan["session_id"]
+        suggestion = c.get(f"/api/sessions/{session}/suggestions").json()[0]
+        payload.update(
+            operation_response("accept_suggestion", {"suggestion_id": suggestion["id"]})
+        )
+        accepted, _ = submit(c, f"把{title}加进去", "accept", session)
+        assert len(accepted["todo_ids"]) == 1
+        assert c.get("/api/todos").json()[0]["title"] == title
+        other = c.post("/api/sessions").json()["id"]
+        rejected, _ = submit(c, f"把{title}加进去", "cross-session", other)
+        assert not rejected["todo_ids"]
+        assert len(c.get("/api/todos").json()) == 1
 
 
 def test_batch_empty_invalid_stale_and_completed_nodes(tmp_path):
