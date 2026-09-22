@@ -9,6 +9,7 @@ from uuid import uuid4
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.exercise_checks import ExerciseError
 from app.iqs import IQS, result_status
 from app.memory import Usage
 from app.model import ModelError, call_model
@@ -182,6 +183,10 @@ async def research_learning(
                 if store.memory_revision() != revision:
                     store.memory_record(run_id, loaded=[], usage=[])
                     raise ValueError("记忆在查询期间已更新")
+            except ExerciseError as error:
+                route_answer = None
+                record["gaps"].append(str(error))
+                record["status"] = "partial"
             except (ModelError, ValueError, KeyError, TypeError, IndexError):
                 route_answer = None
                 record["gaps"].append(

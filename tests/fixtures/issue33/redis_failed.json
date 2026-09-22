@@ -1,0 +1,44 @@
+{
+  "title": "Python Redis 缓存实战路线",
+  "goal": "掌握使用 Python redis-py 客户端实现带过期时间的缓存，理解 Cache-Aside 模式及 TTL 管理。",
+  "nodes": [
+    {
+      "goal": "配置 Python 环境，安装 redis 库，初始化客户端并验证 set/get/ex 参数。",
+      "estimated_minutes": 30,
+      "source_ids": [
+        "S1"
+      ],
+      "exercise": "【准备】\n1. 确保本地已安装并启动 Redis 服务（默认端口 6379）。\n2. 在终端执行命令安装依赖：`python -m pip install redis`\n\n【操作】\n创建脚本 `basic_cache.py`：\n```python\nimport redis\n\n# 初始化客户端，开启 decode_responses 自动将 bytes 转为 str\nr = redis.Redis.from_url(\n    \"redis://localhost:6379/0\",\n    decode_responses=True,\n    socket_timeout=2\n)\n\n# 设置一个带 60 秒过期时间的键\nr.set(\"user:1:name\", \"Alice\", ex=60)\n\n# 获取值并检查剩余生存时间 (TTL)\nname = r.get(\"user:1:name\")\nttl = r.ttl(\"user:1:name\")\n\nprint(f\"Name: {name}\")\nprint(f\"TTL: {ttl} seconds\")\n```\n运行命令：`python basic_cache.py`\n\n【验证】\n输出应包含：\n- `Name: Alice`\n- `TTL:` 后跟一个正整数（如 58 或 59），表示剩余秒数。\n如果 TTL 为 -1 表示永不过期，-2 表示键不存在。",
+      "completion_criteria": "脚本成功运行，打印出设置的字符串 'Alice' 以及一个大于 0 的 TTL 数值。",
+      "todo_title": "练习编写带过期时间的 Redis 基础读写脚本",
+      "display_title": "环境准备与基础读写",
+      "display_goal": "安装 redis-py 并连接本地 Redis，完成带过期时间的键值读写。"
+    },
+    {
+      "goal": "利用 Python 函数封装 Cache-Aside 逻辑，处理缓存命中与未命中的不同路径。",
+      "estimated_minutes": 45,
+      "source_ids": [
+        "S1"
+      ],
+      "exercise": "【准备】\n沿用上一节点的 `basic_cache.py` 环境，确保 Redis 正在运行。\n\n【操作】\n创建脚本 `cache_aside.py`：\n```python\nimport redis\n\nr = redis.Redis.from_url(\"redis://localhost:6379/0\", decode_responses=True)\n\n# 模拟一个简单的数据库查询\nmock_db = {1: \"Alice\", 2: \"Bob\"}\n\ndef query_db(user_id):\n    \"\"\"模拟从数据库查询数据\"\"\"\n    print(f\"[DB Query] Fetching user {user_id}...\")\n    return mock_db.get(user_id)\n\ndef get_user(user_id):\n    \"\"\"Cache-Aside 模式：先查缓存，未命中则查 DB 并回填\"\"\"\n    key = f\"user:{user_id}\"\n    \n    # 1. 尝试从缓存获取\n    data = r.get(key)\n    if data is not None:\n        print(f\"[Cache Hit] User {user_id}: {data}\")\n        return data\n    \n    # 2. 缓存未命中，回源数据库\n    row = query_db(user_id)\n    if row is not None:\n        # 3. 回填缓存，设置 300 秒过期\n        r.set(key, row, ex=300)\n        print(f\"[Cache Miss & Fill] User {user_id}: {row}\")\n    else:\n        print(f\"[Not Found] User {user_id} does not exist.\")\n    \n    return row\n\n# 第一次调用：缓存未命中\nget_user(1)\n# 第二次调用：缓存命中\nget_user(1)\n# 测试不存在的用户\nget_user(99)\n```\n运行命令：`python cache_aside.py`\n\n【验证】\n输出应显示：\n1. 第一次调用 `get_user(1)` 时，打印 `[DB Query]` 和 `[Cache Miss & Fill]`。\n2. 第二次调用 `get_user(1)` 时，仅打印 `[Cache Hit]`，不再触发 DB 查询。\n3. 调用 `get_user(99)` 时，打印 `[Not Found]`。",
+      "completion_criteria": "第二次调用同一用户 ID 时，控制台不再出现 '[DB Query]' 字样，证明缓存生效。",
+      "todo_title": "练习实现 Cache-Aside 缓存回填逻辑",
+      "display_title": "实现 Cache-Aside 模式",
+      "display_goal": "编写模拟数据库查询的函数，实现“先查缓存、未命中回源回填”的逻辑。"
+    },
+    {
+      "goal": "编写更新函数，演示在数据变更时通过删除缓存迫使下次读取重新回源。",
+      "estimated_minutes": 30,
+      "source_ids": [
+        "S1"
+      ],
+      "exercise": "【准备】\n确保 Redis 服务正常运行，且 `mock_db` 字典在内存中可被修改。\n\n【操作】\n创建脚本 `cache_update.py`：\n```python\nimport redis\n\nr = redis.Redis.from_url(\"redis://localhost:6379/0\", decode_responses=True)\n\n# 模拟数据库\nmock_db = {1: \"Alice\"}\n\ndef update_db(user_id, new_name):\n    \"\"\"模拟更新数据库\"\"\"\n    if user_id in mock_db:\n        mock_db[user_id] = new_name\n        print(f\"[DB Update] User {user_id} changed to {new_name}\")\n        return True\n    return False\n\ndef get_user(user_id):\n    key = f\"user:{user_id}\"\n    data = r.get(key)\n    if data is not None:\n        return f\"[Cache] {data}\"\n    row = mock_db.get(user_id)\n    if row:\n        r.set(key, row, ex=300)\n        return f\"[DB] {row}\"\n    return None\n\ndef update_user(user_id, new_name):\n    \"\"\"更新策略：先更新 DB，再删除缓存\"\"\"\n    if update_db(user_id, new_name):\n        # 删除缓存，确保下次读取能拿到新数据\n        r.delete(f\"user:{user_id}\")\n        print(f\"[Cache Delete] Removed cache for user {user_id}\")\n\n# 1. 初始读取，填入缓存\nprint(get_user(1))\n\n# 2. 更新数据\nupdate_user(1, \"Alice Updated\")\n\n# 3. 再次读取，应触发回源\nprint(get_user(1))\n```\n运行命令：`python cache_update.py`\n\n【验证】\n输出应显示：\n1. 第一次 `get_user` 返回 `[DB] Alice`。\n2. `update_user` 执行后打印 `[DB Update]` 和 `[Cache Delete]`。\n3. 第二次 `get_user` 返回 `[DB] Alice Updated`，而不是旧的缓存值。",
+      "completion_criteria": "更新操作后，再次读取必须从数据库获取到新值 'Alice Updated'，不能读到旧值。",
+      "todo_title": "练习编写缓存更新与删除逻辑",
+      "display_title": "缓存更新与失效策略",
+      "display_goal": "实现“先更新数据库、再删除缓存”的逻辑，确保数据一致性。"
+    }
+  ],
+  "memory_usage": [],
+  "gaps": []
+}

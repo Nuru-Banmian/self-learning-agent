@@ -1,8 +1,10 @@
 """Full exercises survive the public route/detail/revision lifecycle."""
 
 import json
+from pathlib import Path
 
 import httpx
+import pytest
 
 from tests.test_chat import submit
 from tests.test_maintenance import action, operation_response
@@ -51,6 +53,178 @@ if __name__ == "__main__":
 应依次输出 ERROR disk、ERROR timeout、errors: 2。INFO 行应被过滤。
 检查输入文件仍保留四行；生成器只筛选读取结果，不删除原始记录。
 """.strip()
+
+REDIS_PREPARATION = """【准备】在 Ubuntu 终端执行：
+```sh
+sudo apt-get update
+sudo apt-get install -y redis-server python3-venv
+sudo service redis-server start
+redis-cli ping
+python3 -m venv .venv
+.venv/bin/python -m pip install redis
+```
+PING 应返回 PONG。所有脚本用 .venv/bin/python 运行。
+"""
+REDIS_SCRIPT = """import redis
+r = redis.Redis(host="localhost", port=6379, decode_responses=True)
+KEY = "learning:cache:node1"
+r.delete(KEY)
+db = {1: "Alice"}
+def get_user():
+    value = r.get(KEY)
+    if value is not None:
+        print("Cache", value)
+        return value
+    value = db[1]
+    r.set(KEY, value, ex=60)
+    print("DB", value)
+    return value
+get_user()
+get_user()
+db[1] = "Bob"
+r.delete(KEY)
+get_user()
+"""
+
+
+def redis_answer():
+    answer = roadmap_answer()
+    for i, node in enumerate(answer["nodes"], 1):
+        script = REDIS_SCRIPT.replace("node1", f"node{i}")
+        node["exercise"] = (
+            (REDIS_PREPARATION if i == 1 else "沿用第一节点环境。")
+            + f"【操作】保存 lesson{i}.py，运行 .venv/bin/python lesson{i}.py。\n"
+            + f"```python\n{script}```\n"
+            + "【验证】依次输出 DB Alice、Cache Alice、DB Bob。"
+        )
+        node["completion_criteria"] = "重复执行输出仍为 DB Alice、Cache Alice、DB Bob"
+    return answer
+
+
+def exercise_provider(answer):
+    base = roadmap_provider([])
+
+    def provider(request):
+        body = json.loads(request.content)
+        if (
+            body.get("tools", [{}])[0].get("function", {}).get("name")
+            == "roadmap_answer"
+        ):
+            return httpx.Response(
+                200, json=operation_response("roadmap_answer", answer)
+            )
+        return base(request)
+
+    return provider
+
+
+@pytest.mark.parametrize("defect", ["setup", "reset", "shared", "late-reset"])
+def test_redis_prerequisite_defects_remain_visible_without_saving(tmp_path, defect):
+    answer = redis_answer()
+    if defect == "setup":
+        answer["nodes"][0]["exercise"] = answer["nodes"][0]["exercise"].replace(
+            "sudo service redis-server start", "确保 Redis 已启动"
+        )
+    elif defect == "shared":
+        answer["nodes"][1]["exercise"] = answer["nodes"][1]["exercise"].replace(
+            "node2", "node1"
+        )
+    else:
+        text = answer["nodes"][1]["exercise"].replace("r.delete(KEY)\n", "", 1)
+        if defect == "late-reset":
+            text = text.replace(
+                "get_user()\nget_user()", "get_user()\nr.delete(KEY)\nget_user()"
+            )
+        answer["nodes"][1]["exercise"] = text
+    with roadmap_client(tmp_path, [], exercise_provider(answer)) as client:
+        run, events = submit(client, REQUEST)
+        assert run["status"] == "partial"
+        assert not run.get("roadmap")
+        assert client.get("/api/roadmaps").json() == []
+        assert client.get("/api/todos").json() == []
+        assert run["research"]["sources"]
+        assert "event: terminal" in events
+    with roadmap_client(tmp_path, [], dashscope_api_key="", iqs_api_key="") as client:
+        assert (
+            client.get(f"/api/runs/{run['id']}").json()["research"] == run["research"]
+        )
+        assert client.get("/api/roadmaps").json() == []
+
+
+def test_independent_redis_exercises_survive_restart(tmp_path):
+    answer = redis_answer()
+    with roadmap_client(tmp_path, [], exercise_provider(answer)) as client:
+        run, _ = submit(client, REQUEST)
+        assert run["status"] == "completed", run["research"]["gaps"]
+        assert [n["exercise"] for n in run["roadmap"]["nodes"]] == [
+            n["exercise"] for n in answer["nodes"]
+        ]
+        assert client.get("/api/todos").json() == []
+    with roadmap_client(tmp_path, [], dashscope_api_key="", iqs_api_key="") as client:
+        assert (
+            client.get(f"/api/roadmaps/{run['roadmap']['id']}").json() == run["roadmap"]
+        )
+
+
+def test_model_revision_cannot_remove_redis_state_preparation(tmp_path):
+    base = exercise_provider(redis_answer())
+
+    def provider(request):
+        body = json.loads(request.content)
+        name = body.get("tools", [{}])[0].get("function", {}).get("name")
+        if name == "revision_plan":
+            return httpx.Response(
+                200, json=operation_response(name, {"query": None, "unsupported": []})
+            )
+        if name == "revision_answer":
+            route = json.loads(body["messages"][-1]["content"])["route"]
+            proposed = revision_args(route)
+            proposed["nodes"][0]["exercise"] = route["nodes"][0]["exercise"].replace(
+                "r.delete(KEY)\n", "", 1
+            )
+            return httpx.Response(200, json=operation_response(name, proposed))
+        return base(request)
+
+    with roadmap_client(tmp_path, [], provider) as client:
+        generated, _ = submit(client, REQUEST)
+        route = generated["roadmap"]
+        result, events = submit(
+            client, "调整这条路线，简化第一个练习", "revision", generated["session_id"]
+        )
+        assert "顶层专用键重置" in result["reply"]
+        assert "event: terminal" in events
+        assert client.get(f"/api/roadmaps/{route['id']}").json() == route
+        assert client.get("/api/todos").json() == []
+
+
+def test_failed_live_redis_exercises_are_not_published(tmp_path):
+    answer = json.loads(
+        (Path(__file__).parent / "fixtures/issue33/redis_failed.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    base = roadmap_provider([])
+
+    def provider(request):
+        body = json.loads(request.content)
+        if (
+            body.get("tools", [{}])[0].get("function", {}).get("name")
+            == "roadmap_answer"
+        ):
+            return httpx.Response(
+                200, json=operation_response("roadmap_answer", answer)
+            )
+        return base(request)
+
+    with roadmap_client(tmp_path, [], provider) as client:
+        run, events = submit(client, REQUEST)
+        assert run["status"] == "partial"
+        assert not run.get("roadmap")
+        assert client.get("/api/roadmaps").json() == []
+        assert client.get("/api/todos").json() == []
+        assert run["research"]["sources"]
+        assert any("练习" in gap for gap in run["research"]["gaps"])
+        assert "event: terminal" in events
 
 
 def test_truncated_model_route_is_not_saved_as_complete_content(tmp_path):

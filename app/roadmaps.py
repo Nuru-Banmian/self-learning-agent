@@ -7,6 +7,7 @@ from typing import Annotated, Any
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.exercise_checks import ExerciseError, check_exercises, redis_instructions
 from app.memory import Usage
 from app.model import call_model
 from app.roadmap_presentation import render_route
@@ -267,6 +268,16 @@ async def compose_roadmap(
                     "必须填写路线display_title以及每节点display_title和display_goal。"
                     "这两项用于默认清单：短标题加一句具体目标，保留关键动作，"
                     "不能复制长练习、代码、资料编号或预计分钟。完整操作仍放exercise。"
+                    + redis_instructions(
+                        json.dumps(
+                            {
+                                "request": run["content"],
+                                "constraints": run.get("learning_constraints", {}),
+                                "task": record.get("task", {}),
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
                 ),
             },
             {
@@ -299,6 +310,19 @@ async def compose_roadmap(
     if len(calls) != 1 or calls[0]["function"]["name"] != "roadmap_answer":
         raise ValueError("路线组织失败")
     answer = RoadmapAnswer.model_validate_json(calls[0]["function"]["arguments"])
+    try:
+        check_exercises([node.exercise for node in answer.nodes])
+    except ExerciseError as error:
+        store.event(
+            run["id"],
+            "exercise_validation",
+            {
+                "status": "rejected",
+                "reason": str(error),
+                "candidate": answer.model_dump(),
+            },
+        )
+        raise
     if any(
         not set(n.source_ids) <= {s["id"] for s in record["sources"]}
         for n in answer.nodes
