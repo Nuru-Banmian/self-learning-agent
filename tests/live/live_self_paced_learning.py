@@ -21,8 +21,8 @@ from tests.test_maintenance import action
 from tests.test_process import free_port, server_process
 
 
-def main():
-    directory = Path("output/issue35/live") / uuid4().hex[:10]
+def main(output_root=Path("output/issue35/live")):
+    directory = output_root / uuid4().hex[:10]
     directory.mkdir(parents=True)
     database = (directory / "live.db").resolve()
     records = []
