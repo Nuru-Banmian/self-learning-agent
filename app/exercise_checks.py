@@ -33,6 +33,10 @@ def redis_instructions(context: str) -> str:
     return REDIS_INSTRUCTIONS if re.search(r"\bredis\b", context, re.I) else ""
 
 
+def redis_initializer(call: ast.Call) -> bool:
+    return ast.unparse(call.func) in ("redis.Redis", "redis.Redis.from_url")
+
+
 def check_exercises(exercises: Sequence[str]) -> None:
     scripts = [
         (index, code)
@@ -83,7 +87,7 @@ def check_exercises(exercises: Sequence[str]) -> None:
             and len(item.targets) == 1
             and isinstance(item.targets[0], ast.Name)
             and isinstance(item.value, ast.Call)
-            and ast.unparse(item.value.func) in ("redis.Redis", "redis.Redis.from_url")
+            and redis_initializer(item.value)
         }
         if not clients:
             raise ExerciseError(
@@ -110,6 +114,12 @@ def check_exercises(exercises: Sequence[str]) -> None:
                 "exists",
             ):
                 raise ExerciseError(f"节点 {index} 的 Redis 操作无法核对专用键范围。")
+            if call.func.attr in ("delete", "exists") and (
+                len(call.args) != 1 or call.keywords
+            ):
+                raise ExerciseError(
+                    f"节点 {index} 的多键操作无法核对，请逐个操作专用键。"
+                )
             arg = call.args[0] if call.args else None
             key = (
                 constants.get(arg.id)
@@ -137,6 +147,13 @@ def check_exercises(exercises: Sequence[str]) -> None:
                 continue
             calls = [item for item in ast.walk(statement) if isinstance(item, ast.Call)]
             for call in calls:
+                if (
+                    isinstance(call.func, ast.Attribute)
+                    and isinstance(call.func.value, ast.Name)
+                    and call.func.value.id in clients
+                    and call.func.attr == "ping"
+                ):
+                    continue
                 entry = next(
                     (key for candidate, key in uses if candidate is call), None
                 )
@@ -151,8 +168,7 @@ def check_exercises(exercises: Sequence[str]) -> None:
                 elif (
                     isinstance(statement, ast.Assign)
                     and call is statement.value
-                    and ast.unparse(call.func)
-                    in ("redis.Redis", "redis.Redis.from_url")
+                    and redis_initializer(call)
                 ):
                     continue
                 elif not {key for _, key in uses} <= reset:

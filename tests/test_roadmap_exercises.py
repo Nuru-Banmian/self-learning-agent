@@ -118,7 +118,9 @@ def exercise_provider(answer):
     return provider
 
 
-@pytest.mark.parametrize("defect", ["setup", "reset", "shared", "late-reset"])
+@pytest.mark.parametrize(
+    "defect", ["setup", "reset", "shared", "late-reset", "extra-key"]
+)
 def test_redis_prerequisite_defects_remain_visible_without_saving(tmp_path, defect):
     answer = redis_answer()
     if defect == "setup":
@@ -128,6 +130,10 @@ def test_redis_prerequisite_defects_remain_visible_without_saving(tmp_path, defe
     elif defect == "shared":
         answer["nodes"][1]["exercise"] = answer["nodes"][1]["exercise"].replace(
             "node2", "node1"
+        )
+    elif defect == "extra-key":
+        answer["nodes"][0]["exercise"] = answer["nodes"][0]["exercise"].replace(
+            "r.delete(KEY)", 'r.delete(KEY, "business:key")'
         )
     else:
         text = answer["nodes"][1]["exercise"].replace("r.delete(KEY)\n", "", 1)
@@ -153,6 +159,9 @@ def test_redis_prerequisite_defects_remain_visible_without_saving(tmp_path, defe
 
 def test_independent_redis_exercises_survive_restart(tmp_path):
     answer = redis_answer()
+    answer["nodes"][0]["exercise"] = answer["nodes"][0]["exercise"].replace(
+        "r.delete(KEY)\n", "assert r.ping()\nr.delete(KEY)\n", 1
+    )
     with roadmap_client(tmp_path, [], exercise_provider(answer)) as client:
         run, _ = submit(client, REQUEST)
         assert run["status"] == "completed", run["research"]["gaps"]
@@ -164,6 +173,43 @@ def test_independent_redis_exercises_survive_restart(tmp_path):
         assert (
             client.get(f"/api/roadmaps/{run['roadmap']['id']}").json() == run["roadmap"]
         )
+
+
+@pytest.mark.parametrize("budget", [2, 3])
+def test_one_targeted_correction_keeps_failed_candidate_and_respects_budget(
+    tmp_path, budget
+):
+    good = redis_answer()
+    bad = redis_answer()
+    bad["nodes"][1]["exercise"] = bad["nodes"][1]["exercise"].replace("node2", "node1")
+    base = roadmap_provider([])
+    answers = iter([bad, good])
+
+    def provider(request):
+        body = json.loads(request.content)
+        if (
+            body.get("tools", [{}])[0].get("function", {}).get("name")
+            == "roadmap_answer"
+        ):
+            return httpx.Response(
+                200, json=operation_response("roadmap_answer", next(answers))
+            )
+        return base(request)
+
+    with roadmap_client(tmp_path, [], provider, max_model_calls=budget) as client:
+        run, events = submit(client, REQUEST)
+        assert "event: exercise_validation" in events
+        assert "复用了缓存键" in events
+        assert run["model_calls"] <= budget
+        if budget == 3:
+            assert run["status"] == "completed"
+            assert (
+                run["roadmap"]["nodes"][1]["exercise"] == good["nodes"][1]["exercise"]
+            )
+        else:
+            assert run["status"] == "partial"
+            assert client.get("/api/roadmaps").json() == []
+        assert client.get("/api/todos").json() == []
 
 
 def test_model_revision_cannot_remove_redis_state_preparation(tmp_path):
