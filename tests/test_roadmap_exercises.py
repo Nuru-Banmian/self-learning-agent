@@ -182,7 +182,8 @@ def test_independent_redis_exercises_survive_restart(tmp_path):
 @pytest.mark.parametrize(
     "operations",
     [
-        'r.hset(KEY, mapping={"name": "Alice"})\nprint(r.hgetall(KEY))\nr.delete(KEY)\n',
+        'r.hset(KEY, mapping={"name": "Alice"})\n'
+        "print(r.hgetall(KEY))\nr.delete(KEY)\n",
         'r.lpush(KEY, "Alice")\nprint(r.lpop(KEY))\nr.delete(KEY)\n',
     ],
 )
