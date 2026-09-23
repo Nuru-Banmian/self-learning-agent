@@ -22,7 +22,8 @@ REDIS_INSTRUCTIONS = (
     "各脚本完整初始化自己的模拟数据库，不继承前一脚本变量。"
     "第一节点给一条完整服务安装、启动、redis-cli ping返回PONG的路径，"
     "并给Python虚拟环境和redis库安装命令。若未指定操作系统，明确选用Ubuntu终端，"
-    "给apt安装redis-server、service启动命令；Windows读者先安装并进入Ubuntu/WSL，"
+    "给apt安装redis-server与python3-venv、service启动命令；"
+    "Windows读者先安装并进入Ubuntu/WSL，"
     "不能把安装redis Python库说成安装Redis服务。"
     "每节点用状态表核对：清理后首次读、第二次读、更新后读、再次运行，"
     "输出必须与实际分支和数据一致；状态表可简写在验证段。"
@@ -65,6 +66,14 @@ def check_exercises(exercises: Sequence[str]) -> None:
             "练习准备不完整：需提供 Redis 服务安装、启动、PING 检查"
             "及 Python 依赖安装命令。"
         )
+    if (
+        re.search(r"apt(?:-get)? install", preparation)
+        and re.search(r"python3? -m venv", preparation)
+        and not re.search(
+            r"apt(?:-get)? install[^\n`]*\bpython3(?:\.\d+)?-venv\b", preparation
+        )
+    ):
+        raise ExerciseError("练习使用 Ubuntu 虚拟环境，但缺少 python3-venv 安装步骤。")
     owners: dict[str, int] = {}
     for index, code in scripts:
         try:

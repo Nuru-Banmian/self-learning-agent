@@ -119,13 +119,17 @@ def exercise_provider(answer):
 
 
 @pytest.mark.parametrize(
-    "defect", ["setup", "reset", "shared", "late-reset", "extra-key"]
+    "defect", ["setup", "venv", "reset", "shared", "late-reset", "extra-key"]
 )
 def test_redis_prerequisite_defects_remain_visible_without_saving(tmp_path, defect):
     answer = redis_answer()
     if defect == "setup":
         answer["nodes"][0]["exercise"] = answer["nodes"][0]["exercise"].replace(
             "sudo service redis-server start", "确保 Redis 已启动"
+        )
+    elif defect == "venv":
+        answer["nodes"][0]["exercise"] = answer["nodes"][0]["exercise"].replace(
+            "redis-server python3-venv", "redis-server"
         )
     elif defect == "shared":
         answer["nodes"][1]["exercise"] = answer["nodes"][1]["exercise"].replace(
