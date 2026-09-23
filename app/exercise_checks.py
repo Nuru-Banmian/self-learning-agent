@@ -121,6 +121,16 @@ def check_exercises(exercises: Sequence[str]) -> None:
                 "expire",
                 "delete",
                 "exists",
+                "hset",
+                "hget",
+                "hgetall",
+                "hdel",
+                "lpush",
+                "rpush",
+                "lpop",
+                "rpop",
+                "lrange",
+                "llen",
             ):
                 raise ExerciseError(f"节点 {index} 的 Redis 操作无法核对专用键范围。")
             if call.func.attr in ("delete", "exists") and (

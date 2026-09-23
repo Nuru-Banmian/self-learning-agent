@@ -179,6 +179,24 @@ def test_independent_redis_exercises_survive_restart(tmp_path):
         )
 
 
+@pytest.mark.parametrize(
+    "operations",
+    [
+        'r.hset(KEY, mapping={"name": "Alice"})\nprint(r.hgetall(KEY))\nr.delete(KEY)\n',
+        'r.lpush(KEY, "Alice")\nprint(r.lpop(KEY))\nr.delete(KEY)\n',
+    ],
+)
+def test_hash_and_queue_exercises_are_not_limited_to_string_cache(tmp_path, operations):
+    answer = redis_answer()
+    answer["nodes"][0]["exercise"] = answer["nodes"][0]["exercise"].replace(
+        "r.delete(KEY)\n", "r.delete(KEY)\n" + operations, 1
+    )
+    with roadmap_client(tmp_path, [], exercise_provider(answer)) as client:
+        run, _ = submit(client, REQUEST)
+        assert run.get("roadmap"), run["research"]["gaps"]
+        assert client.get("/api/todos").json() == []
+
+
 @pytest.mark.parametrize("budget", [2, 3])
 def test_one_targeted_correction_keeps_failed_candidate_and_respects_budget(
     tmp_path, budget
