@@ -245,7 +245,11 @@ async def call_model(
                                 else "auto",
                             }
                         ),
-                        "max_tokens": 1800,
+                        # Full node exercises and unchanged revision nodes must
+                        # fit independently of the short default chat reply.
+                        "max_tokens": 8000
+                        if required_tool in ("roadmap_answer", "revision_answer")
+                        else 1800,
                     },
                 )
                 evidence["http_status"] = response.status_code
@@ -261,6 +265,13 @@ async def call_model(
                         for k in ("prompt_tokens", "completion_tokens", "total_tokens")
                         if type(usage.get(k)) is int and usage[k] >= 0
                     } or None
+                finish_reason = payload["choices"][0].get("finish_reason")
+                if isinstance(finish_reason, str):
+                    evidence["finish_reason"] = finish_reason
+                if finish_reason == "length":
+                    raise ModelError(
+                        "模型输出超出长度限制，内容不完整，未保存本次结果。请缩小范围后重试。"
+                    )
                 evidence["status"] = "success"
                 return result
             except httpx.RequestError:

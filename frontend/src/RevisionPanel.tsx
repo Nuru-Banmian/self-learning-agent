@@ -93,7 +93,7 @@ export function RevisionPanel({ route, disabled, act }: {
           <fieldset disabled={disabled || completed}>
             <label>学习目标<input value={node.goal} maxLength={300} onChange={e => patch(index, { goal: e.target.value })} /></label>
             <label>预计分钟<input type="number" min={1} max={480} value={node.estimated_minutes} onChange={e => patch(index, { estimated_minutes: Number(e.target.value) })} /></label>
-            <label>练习<textarea aria-label="练习" value={node.exercise} maxLength={600} onChange={e => patch(index, { exercise: e.target.value })} /></label>
+            <label>练习<textarea aria-label="练习" value={node.exercise} maxLength={2400} onChange={e => patch(index, { exercise: e.target.value })} /></label>
             <label>完成标准<textarea aria-label="完成标准" value={node.completion_criteria} maxLength={400} onChange={e => patch(index, { completion_criteria: e.target.value })} /></label>
             <label>候选待办标题<input value={node.todo_title} maxLength={200} onChange={e => patch(index, { todo_title: e.target.value })} /></label>
             <label>资料（可多选）<select multiple value={node.source_ids} onChange={e => patch(index, { source_ids: Array.from(e.target.selectedOptions, o => o.value) })}>{route.sources.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</select></label>
