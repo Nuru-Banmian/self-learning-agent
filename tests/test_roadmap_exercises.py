@@ -296,6 +296,100 @@ def test_failed_live_redis_exercises_are_not_published(tmp_path):
         assert "event: terminal" in events
 
 
+def test_update_claim_requires_reading_changed_database_after_invalidation(tmp_path):
+    answer = redis_answer()
+    node = answer["nodes"][0]
+    node["goal"] = "更新数据库并删除缓存，再次读取新值。"
+    node["exercise"] = node["exercise"].replace(
+        'db[1] = "Bob"\nr.delete(KEY)\nget_user()',
+        'db[1] = "Bob"\nr.delete(KEY)\n'
+        'print("Cache is empty, next read will reload from DB.")',
+    )
+    with roadmap_client(tmp_path, [], exercise_provider(answer)) as client:
+        run, events = submit(client, REQUEST)
+        assert run["status"] == "partial"
+        assert client.get("/api/roadmaps").json() == []
+        assert client.get("/api/todos").json() == []
+        assert "读回" in " ".join(run["research"]["gaps"])
+        assert "event: exercise_validation" in events
+        assert "event: terminal" in events
+
+
+@pytest.mark.parametrize(
+    "defect",
+    ["unrelated-db", "nested-unexecuted-read", "conditional-read", "constant-return"],
+)
+def test_update_claim_rejects_unrelated_or_unexecuted_readback(tmp_path, defect):
+    answer = redis_answer()
+    node = answer["nodes"][0]
+    node["goal"] = "更新数据库后读回新值"
+    if defect == "unrelated-db":
+        node["exercise"] = node["exercise"].replace(
+            'db[1] = "Bob"', 'other_db = {1: "Alice"}\nother_db[1] = "Bob"'
+        )
+    elif defect == "nested-unexecuted-read":
+        node["exercise"] = node["exercise"].replace(
+            "r.delete(KEY)\nget_user()\n",
+            "r.delete(KEY)\ndef later():\n    get_user()\n",
+        )
+    elif defect == "conditional-read":
+        node["exercise"] = node["exercise"].replace(
+            "r.delete(KEY)\nget_user()\n",
+            'r.delete(KEY)\nprint(get_user() if False else "skipped")\n',
+        )
+    else:
+        node["exercise"] = node["exercise"].replace(
+            "value = db[1]\n    r.set(KEY, value, ex=60)",
+            'value = db[1]\n    value = "Alice"\n    r.set(KEY, value, ex=60)',
+        )
+    with roadmap_client(tmp_path, [], exercise_provider(answer)) as client:
+        run, events = submit(client, REQUEST)
+        assert run["status"] == "partial"
+        assert client.get("/api/roadmaps").json() == []
+        assert client.get("/api/todos").json() == []
+        assert "event: exercise_validation" in events
+
+
+@pytest.mark.parametrize("changed_field", ["goal", "completion_criteria"])
+def test_revision_cannot_add_unperformed_update_to_goal_or_criteria(
+    tmp_path, changed_field
+):
+    answer = redis_answer()
+    answer["nodes"][0]["exercise"] = answer["nodes"][0]["exercise"].replace(
+        'db[1] = "Bob"\nr.delete(KEY)\nget_user()',
+        'print("Initial cache verified")',
+    )
+    answer["nodes"][0]["completion_criteria"] = (
+        "首次输出 DB Alice，二次输出 Cache Alice"
+    )
+    base = exercise_provider(answer)
+
+    def provider(request):
+        body = json.loads(request.content)
+        name = body.get("tools", [{}])[0].get("function", {}).get("name")
+        if name == "revision_plan":
+            return httpx.Response(
+                200, json=operation_response(name, {"query": None, "unsupported": []})
+            )
+        if name == "revision_answer":
+            route = json.loads(body["messages"][-1]["content"])["route"]
+            proposed = revision_args(route)
+            proposed["nodes"][0]["exercise"] = route["nodes"][0]["exercise"]
+            proposed["nodes"][0][changed_field] = "更新数据库后读回新值"
+            return httpx.Response(200, json=operation_response(name, proposed))
+        return base(request)
+
+    with roadmap_client(tmp_path, [], provider) as client:
+        generated, _ = submit(client, REQUEST)
+        route = generated["roadmap"]
+        result, events = submit(
+            client, "调整这条路线，简化第一个练习", "revision", generated["session_id"]
+        )
+        assert "读回" in result["reply"], events
+        assert "event: exercise_validation" in events
+        assert client.get(f"/api/roadmaps/{route['id']}").json() == route
+
+
 def test_truncated_model_route_is_not_saved_as_complete_content(tmp_path):
     base = roadmap_provider([])
 

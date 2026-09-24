@@ -290,10 +290,18 @@ async def generate(
         raise Clarification("模型返回的路线目标或版本不一致，未保存方案。")
     old = {n["id"]: n for n in route["nodes"]}
     if any(
-        n.exercise != old.get(n.node_id or "", {}).get("exercise") for n in answer.nodes
+        any(
+            getattr(n, field) != old.get(n.node_id or "", {}).get(field)
+            for field in ("exercise", "goal", "completion_criteria")
+        )
+        for n in answer.nodes
     ):
         try:
-            check_exercises([node.exercise for node in answer.nodes])
+            check_exercises(
+                [node.exercise for node in answer.nodes],
+                [node.goal for node in answer.nodes],
+                [node.completion_criteria for node in answer.nodes],
+            )
         except ExerciseError as error:
             store.event(
                 run["id"],

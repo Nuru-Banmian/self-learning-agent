@@ -312,7 +312,11 @@ async def compose_roadmap(
             raise ValueError("路线组织失败")
         answer = RoadmapAnswer.model_validate_json(calls[0]["function"]["arguments"])
         try:
-            check_exercises([node.exercise for node in answer.nodes])
+            check_exercises(
+                [node.exercise for node in answer.nodes],
+                [node.goal for node in answer.nodes],
+                [node.completion_criteria for node in answer.nodes],
+            )
             break
         except ExerciseError as error:
             store.event(

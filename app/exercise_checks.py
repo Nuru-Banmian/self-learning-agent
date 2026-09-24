@@ -38,7 +38,11 @@ def redis_initializer(call: ast.Call) -> bool:
     return ast.unparse(call.func) in ("redis.Redis", "redis.Redis.from_url")
 
 
-def check_exercises(exercises: Sequence[str]) -> None:
+def check_exercises(
+    exercises: Sequence[str],
+    goals: Sequence[str] = (),
+    criteria: Sequence[str] = (),
+) -> None:
     scripts = [
         (index, code)
         for index, exercise in enumerate(exercises, 1)
@@ -197,3 +201,147 @@ def check_exercises(exercises: Sequence[str]) -> None:
                     )
         if not {key for _, key in uses} <= reset:
             raise ExerciseError(f"节点 {index} 缺少专用键操作或独立初始化。")
+        claims_update = bool(
+            re.search(
+                r"更新|修改底层|新值|updated|new value",
+                " ".join(
+                    (
+                        goals[index - 1] if goals else "",
+                        criteria[index - 1] if criteria else "",
+                    )
+                ),
+                re.I,
+            )
+        )
+        if claims_update:
+            readers: dict[str, set[tuple[str, str, str]]] = {}
+            for item in tree.body:
+                if not isinstance(item, ast.FunctionDef):
+                    continue
+                db_refs: set[tuple[str, str]] = set()
+                for position, statement in enumerate(item.body):
+                    if not (
+                        isinstance(statement, ast.Assign)
+                        and len(statement.targets) == 1
+                        and isinstance(statement.targets[0], ast.Name)
+                        and isinstance(statement.value, ast.Subscript)
+                        and isinstance(statement.value.value, ast.Name)
+                    ):
+                        continue
+                    value_name = statement.targets[0].id
+                    following = item.body[position + 1 :]
+                    write_position = next(
+                        (
+                            offset
+                            for offset, later in enumerate(following)
+                            if any(
+                                isinstance(call, ast.Call)
+                                and isinstance(call.func, ast.Attribute)
+                                and isinstance(call.func.value, ast.Name)
+                                and call.func.value.id in clients
+                                and call.func.attr in ("set", "setex")
+                                and len(call.args) > 1
+                                and isinstance(call.args[-1], ast.Name)
+                                and call.args[-1].id == value_name
+                                for call in ast.walk(later)
+                            )
+                        ),
+                        None,
+                    )
+                    if write_position is None or any(
+                        isinstance(later, ast.Assign)
+                        and any(
+                            isinstance(target, ast.Name) and target.id == value_name
+                            for target in later.targets
+                        )
+                        for later in following[:write_position]
+                    ):
+                        continue
+                    if any(
+                        isinstance(ret, ast.Return)
+                        and isinstance(ret.value, ast.Name)
+                        and ret.value.id == value_name
+                        for ret in ast.walk(item)
+                    ):
+                        db_refs.add(
+                            (
+                                statement.value.value.id,
+                                ast.unparse(statement.value.slice),
+                            )
+                        )
+                cache_keys = {
+                    key
+                    for call, key in uses
+                    if isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "get"
+                    and any(call is nested for nested in ast.walk(item))
+                }
+                readers[item.name] = {
+                    (db_name, db_index, key)
+                    for db_name, db_index in db_refs
+                    for key in cache_keys
+                }
+            actions = tree.body
+            updates = {
+                pos: {
+                    (target.value.id, ast.unparse(target.slice))
+                    for target in (
+                        item.targets if isinstance(item, ast.Assign) else [item.target]
+                    )
+                    if isinstance(target, ast.Subscript)
+                    and isinstance(target.value, ast.Name)
+                }
+                for pos, item in enumerate(actions)
+                if isinstance(item, (ast.Assign, ast.AugAssign))
+            }
+
+            def executed_calls(statement: ast.stmt) -> list[ast.Call]:
+                if not isinstance(statement, (ast.Expr, ast.Assign, ast.AnnAssign)):
+                    return []
+                if any(
+                    isinstance(node, (ast.IfExp, ast.BoolOp, ast.Lambda))
+                    for node in ast.walk(statement)
+                ):
+                    return []
+                return [
+                    node for node in ast.walk(statement) if isinstance(node, ast.Call)
+                ]
+
+            def reads(
+                statement: ast.stmt,
+                db: tuple[str, str],
+                key: str,
+                readers: dict[str, set[tuple[str, str, str]]] = readers,
+            ) -> bool:
+                return any(
+                    isinstance(call.func, ast.Name)
+                    and (db[0], db[1], key) in readers.get(call.func.id, set())
+                    for call in executed_calls(statement)
+                )
+
+            def invalidates(
+                statement: ast.stmt,
+                key: str,
+                uses: list[tuple[ast.Call, str]] = uses,
+            ) -> bool:
+                return any(
+                    call.func.attr == "delete" and (call, key) in uses
+                    for call in executed_calls(statement)
+                    if isinstance(call.func, ast.Attribute)
+                )
+
+            if not any(
+                any(reads(item, db, key) for item in actions[:update])
+                and any(
+                    invalidates(actions[delete], key)
+                    and any(reads(item, db, key) for item in actions[delete + 1 :])
+                    for delete in range(update + 1, len(actions))
+                )
+                for update, changed in updates.items()
+                for db in changed
+                for key in {entry[2] for values in readers.values() for entry in values}
+            ):
+                raise ExerciseError(
+                    f"节点 {index} 声称更新后读取新值，但脚本未展示旧值读取、"
+                    "底层数据更新、缓存失效及新值读回的完整顺序。"
+                )
